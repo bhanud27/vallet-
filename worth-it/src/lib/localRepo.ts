@@ -1,8 +1,8 @@
 import { DEMO_POLLS } from './demoData';
 import {
-  AppError, Poll, PollSummary, PollView, PurchaseUpdate, Repo, Session, VoteEntry,
+  AppError, NewPollMedia, Poll, PollExtras, PollMedia, PollSummary, PollView, PurchaseUpdate, Repo, Session, VoteEntry,
 } from './types';
-import { normaliseUpdate, validatePoll, validateUpdate, validateVote } from './validation';
+import { normaliseUpdate, parseProductUrl, validatePoll, validateUpdate, validateVote } from './validation';
 
 export interface KV {
   getItem(key: string): Promise<string | null>;
@@ -14,11 +14,13 @@ export interface LocalDeps {
   kv: KV;
   /** Turns a picked photo into a small data URI so it can live in local storage. */
   prepareImage(photo: { uri: string; mimeType?: string }): Promise<string>;
+  storeMedia?(id: string, item: NewPollMedia): Promise<void>;
+  removeMedia?(id: string, kind: PollMedia['kind']): Promise<void>;
   now?: () => number;
   uuid?: () => string;
 }
 
-interface StoredPoll extends Poll { authorId: string | null }
+interface StoredPoll extends Poll { authorId: string | null; productUrl?: string | null }
 interface StoredVote extends VoteEntry { pollId: string; voterId: string }
 interface State {
   v: 1;
@@ -27,6 +29,7 @@ interface State {
   polls: StoredPoll[];
   votes: StoredVote[];
   updates: Record<string, PurchaseUpdate>;
+  stars?: Record<string, string[]>;
 }
 
 const KEY = 'worthit:local:v1';
@@ -91,6 +94,11 @@ export function createLocalRepo(deps: LocalDeps): Repo {
   }
 
   const sessionOf = (s: State): Session => ({ userId: s.me, isGuest: true, email: null });
+  const cleanup = (media: PollMedia[]) => Promise.allSettled(media.map((item) => deps.removeMedia?.(item.value, item.kind)));
+  function extras(s: State, poll: StoredPoll): PollExtras {
+    const people = s.stars?.[poll.id] ?? [];
+    return { productUrl: poll.productUrl ?? null, stars: people.length, starred: people.includes(s.me) };
+  }
   const summary = (s: State, p: StoredPoll): PollSummary => {
     const { authorId: _a, ...poll } = p;
     return { ...poll, voteCount: s.votes.filter((v) => v.pollId === p.id).length, updateStatus: s.updates[p.id]?.status ?? null };
@@ -113,23 +121,34 @@ export function createLocalRepo(deps: LocalDeps): Repo {
 
     async createPoll(input) {
       validatePoll(input);
-      let dataUri: string;
+      let dataUri: string | null = null;
+      const media: PollMedia[] = [];
       try {
-        dataUri = await deps.prepareImage(input.photo);
-      } catch (e) {
-        throw new AppError('upload_failed', 'Could not process that photo. Try a different image.');
+        if (input.photo) dataUri = await deps.prepareImage(input.photo);
+        for (const item of input.media ?? []) {
+          if (!deps.storeMedia) throw new Error('Media storage is unavailable.');
+          const id = uuid();
+          media.push({ kind: item.kind, value: id, device: true, sourceUrl: item.sourceUrl });
+          await deps.storeMedia(id, item);
+        }
+      } catch {
+        await cleanup(media);
+        throw new AppError('upload_failed', 'Could not save a media item. Check the file format and available storage.');
       }
       const s = await load();
       const poll: StoredPoll = {
         id: uuid(), authorId: s.me, itemName: input.itemName.trim(), priceInr: input.priceInr,
         question: input.question.trim(), imageUrl: dataUri, demoImage: null, isDemo: false, createdAt: iso(now()),
+        productUrl: input.productUrl ? parseProductUrl(input.productUrl) : null,
+        ...(media.length ? { media } : {}),
       };
       s.polls.push(poll);
       try {
         await save();
-      } catch (e) {
-        s.polls.pop();
-        throw new AppError('upload_failed', 'Could not save the photo on this device. Browser storage may be full. Try a smaller photo.');
+      } catch {
+        s.polls = s.polls.filter((item) => item.id !== poll.id);
+        await cleanup(media);
+        throw new AppError('upload_failed', 'Could not save the poll on this device. Browser storage may be full.');
       }
       const { authorId: _a, ...pub } = poll;
       return pub;
@@ -149,6 +168,26 @@ export function createLocalRepo(deps: LocalDeps): Repo {
         isAuthor: authorId !== null && authorId === s.me,
         myChoice: mine?.choice ?? null,
       } satisfies PollView;
+    },
+
+    async getPollExtras(ids) {
+      const s = await load();
+      const included = new Set(ids);
+      return Object.fromEntries(s.polls.filter((poll) => included.has(poll.id)).map((poll) => [poll.id, extras(s, poll)]));
+    },
+
+    async setPollStar(id, starred) {
+      const s = await load();
+      const poll = s.polls.find((item) => item.id === id);
+      if (!poll) throw new AppError('not_found', 'This poll no longer exists.');
+      const stars = s.stars ??= {};
+      const previous = stars[id] ?? [];
+      const people = new Set(previous);
+      if (starred) people.add(s.me);
+      else people.delete(s.me);
+      stars[id] = [...people];
+      try { await save(); } catch (error) { stars[id] = previous; throw error; }
+      return extras(s, poll);
     },
 
     async castVote(id, input) {
@@ -182,7 +221,13 @@ export function createLocalRepo(deps: LocalDeps): Repo {
     demoTools: {
       async actAsNewGuest() { const s = await load(); s.me = uuid(); await save(); return sessionOf(s); },
       async backToMyIdentity() { const s = await load(); s.me = s.home; await save(); return sessionOf(s); },
-      async resetAll() { await deps.kv.removeItem(KEY); cache = null; return sessionOf(await load()); },
+      async resetAll() {
+        const media = (await load()).polls.flatMap((poll) => poll.media ?? []);
+        await deps.kv.removeItem(KEY);
+        cache = null;
+        await cleanup(media);
+        return sessionOf(await load());
+      },
     },
   };
   return repo;

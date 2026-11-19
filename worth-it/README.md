@@ -27,15 +27,22 @@ npm run web        # browser at http://localhost:8081
 npm start          # Expo dev server; press i / a, or scan the QR code with Expo Go
 ```
 
-Since a second phone can't see your local data, test voting on one device with **Demo tools** (bottom of the home screen) → "Act as a new guest" (you become a different voter) and "Back to my identity".
+Since a second phone can't see your local data, test voting on one device with **Profile → Demo tools → Act as a new guest** and **Back to my identity**.
+
+Open **Profile → Edit profile** to set your display name, photo, and bio or view your polls and reels. Open **Reels** to swipe through the sample videos, or choose **New reel** to publish an MP4 up to 20 MB. Local profiles, videos, and stars stay on the device. In connected mode, reels and their authors' names and photos appear in the shared feed.
+
+Use the star on a poll or reel to add or remove your reaction. A poll gallery can mix photos and MP4 videos (up to 20 MB each) in any order, with up to 24 media items. Pasting an HTTPS store link adds available product images to the gallery and fills the name and INR price when exposed by the store. Each imported photo has a View product button. Stores that block previews can still be linked from a poll, with or without uploaded media.
+
+Expo's local server handles previews on the same port. For hosted builds, run `npm run import:server` behind an HTTPS endpoint and set `EXPO_PUBLIC_PRODUCT_IMPORT_URL` to that endpoint's origin before building. If the web app is on a different origin, set `PRODUCT_IMPORT_ORIGIN` to its origin on the importer.
 
 ## Set up connected mode (needed for the real two-phone test)
 
 1. **Create a Supabase project** at supabase.com.
-2. **Allow guests.** In the dashboard, Authentication → Sign In / Providers → turn on **Allow anonymous sign-ins**. Each browser gets a real guest `auth.uid()`, which is what enforces "one vote per guest session per poll". (Menu labels change over time; look for "anonymous".) For the optional "Save your account" screen, also keep the Email provider on; for a quick POC, turn off "Confirm email".
-3. **Create the schema.** Either paste these two files, in order, into the dashboard SQL Editor:
-   `supabase/migrations/0001_init.sql` (tables, access policies, functions, photo bucket and storage policies) then `supabase/migrations/0002_demo_seed.sql` (three demo polls),
+2. **Configure sign-in.** In **Authentication → Sign In / Providers**, keep the Email provider enabled. Enable **Allow anonymous sign-ins** for guest polls and **Allow manual linking** so guests can turn the same identity into an email account. Keep **Confirm email** enabled for live use. Add your web app's `/auth-confirm` URL in **Authentication → URL Configuration → Redirect URLs** (for example, `http://localhost:8082/auth-confirm`). Native builds can use your configured `EXPO_PUBLIC_WEB_URL` for confirmation or an allowlisted app deep link.
+3. **Create the schema.** Either paste these files, in order, into the dashboard SQL Editor:
+   `supabase/migrations/0001_init.sql` (polls and storage), `supabase/migrations/0002_demo_seed.sql` (sample polls), `supabase/migrations/0003_social.sql` (profiles and reels), `supabase/migrations/0004_poll_stars_and_links.sql` (poll stars and store links), `supabase/migrations/0005_poll_media_gallery.sql` (mixed media galleries), `supabase/migrations/0006_auth_profiles.sql` (signup profiles), and `supabase/migrations/0007_unique_usernames.sql` (unique usernames),
    or with the Supabase CLI: `supabase link --project-ref <ref> && supabase db push`.
+   If migrations 0001 through 0006 are already applied, run only 0007 before releasing the username form. Existing profiles with a valid, unused name keep its lowercase form, and other profiles receive an editable username.
 4. **Add keys.** `cp .env.example .env` and fill in the Project URL and the **anon** key (Project Settings → API). Never put the `service_role` key in this project; nothing here needs it, and `EXPO_PUBLIC_*` values are visible to anyone who opens the app.
 5. **Host the web build.** `EXPO_PUBLIC_*` values are baked in at build time, so build with them set:
    ```bash

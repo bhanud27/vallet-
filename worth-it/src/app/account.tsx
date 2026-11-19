@@ -1,15 +1,34 @@
+import { router } from 'expo-router';
 import React, { useState } from 'react';
 import { Text } from 'react-native';
 import { repo } from '../lib/repo';
+import { resetLocalSocial } from '../lib/socialRepo';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../ui/AppContext';
-import { Banner, Button, Field, Screen } from '../ui/kit';
+import { Banner, Button, Screen } from '../ui/kit';
 import { type } from '../ui/theme';
 
 function LocalTools() {
   const { session, setSession } = useApp();
   const [note, setNote] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState(false);
   const t = repo.demoTools!;
+
+  async function reset() {
+    setResetting(true);
+    setResetError(false);
+    setNote(null);
+    try {
+      await resetLocalSocial();
+      setSession(await t.resetAll());
+      setNote('Demo data reset.');
+    } catch {
+      setResetError(true);
+    } finally {
+      setResetting(false);
+    }
+  }
   return (
     <>
       <Text style={type.title}>Demo tools</Text>
@@ -17,59 +36,54 @@ function LocalTools() {
         Local demo mode keeps everything on this device. These tools let you test the “friend votes” step on one device by switching who you are. For real two-phone sharing, connect Supabase (see the README).
       </Banner>
       <Text style={type.body}>Acting as: <Text style={{ fontWeight: '800' }}>{session.userId.slice(0, 8)}…</Text></Text>
-      <Button testID="act-as-guest" label="Act as a new guest" onPress={async () => { setSession(await t.actAsNewGuest()); setNote('You are now a new guest. Open a poll you created and vote.'); }} />
-      <Button testID="back-to-me" variant="secondary" label="Back to my identity" onPress={async () => { setSession(await t.backToMyIdentity()); setNote('Back to the identity that created your polls.'); }} />
-      <Button testID="reset-demo" variant="quiet" label="Reset all demo data" onPress={async () => { setSession(await t.resetAll()); setNote('Demo data reset.'); }} />
+      <Button testID="act-as-guest" label="Act as a new guest" disabled={resetting} onPress={async () => { setSession(await t.actAsNewGuest()); setNote('You are now a new guest. Open a poll you created and vote.'); }} />
+      <Button testID="back-to-me" variant="secondary" label="Back to my identity" disabled={resetting} onPress={async () => { setSession(await t.backToMyIdentity()); setNote('Back to the identity that created your polls.'); }} />
+      <Button testID="reset-demo" variant="quiet" label="Reset all demo data" loading={resetting} onPress={reset} />
+      {resetError ? <Banner kind="error">Could not reset all demo data. Try again.</Banner> : null}
       {note ? <Banner kind="ok">{note}</Banner> : null}
     </>
   );
 }
 
 function ConnectedAccount() {
-  const { session, refresh } = useApp();
-  const [mode, setMode] = useState<'create' | 'signin'>('create');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { session, setSession } = useApp();
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const [error, setError] = useState('');
 
-  async function submit() {
+  async function signOut() {
     if (!supabase) return;
-    setBusy(true); setMsg(null);
+    setBusy(true);
+    setError('');
     try {
-      if (mode === 'create') {
-        const { error } = await supabase.auth.updateUser({ email: email.trim(), password });
-        if (error) throw error;
-        setMsg({ kind: 'ok', text: 'Account saved. If your project requires email confirmation, check your inbox to finish.' });
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-        if (error) throw error;
-        setMsg({ kind: 'ok', text: 'Signed in.' });
-      }
-      await refresh();
-    } catch (e) {
-      setMsg({ kind: 'error', text: e instanceof Error ? e.message : 'Something went wrong.' });
-    } finally { setBusy(false); }
+      const { error: failure } = await supabase.auth.signOut({ scope: 'local' });
+      if (failure) throw failure;
+      setSession(null);
+      router.replace('/login');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not sign out. Try again.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <>
       <Text style={type.title}>Account</Text>
-      {session.isGuest ? (
-        <Banner kind="warn">You’re using a guest session tied to this browser. If you clear browser data you lose access to polls you created. Save an account to keep them.</Banner>
-      ) : <Banner kind="ok">Signed in as {session.email}</Banner>}
-      {session.isGuest ? (
+      {session.needsPassword ? (
+        <Button label="Finish setting up your account" onPress={() => router.push('/signup')} />
+      ) : session.isGuest ? (
         <>
-          <Field label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" />
-          <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete={mode === 'create' ? 'new-password' : 'current-password'} hint="At least 6 characters" />
-          {msg ? <Banner kind={msg.kind}>{msg.text}</Banner> : null}
-          <Button label={mode === 'create' ? 'Save my account' : 'Sign in'} loading={busy} onPress={submit} />
-          <Button variant="quiet" label={mode === 'create' ? 'I already have an account' : 'Create an account instead'} onPress={() => setMode(mode === 'create' ? 'signin' : 'create')} />
-          {mode === 'signin' ? <Text style={type.small}>Signing in switches to that account. Polls made as this guest stay with the guest session.</Text> : null}
+          <Text style={type.body}>Create an account to keep your polls, reels, and profile across devices.</Text>
+          <Button label="Create account" onPress={() => router.push('/signup')} />
+          <Button label="Sign in" variant="secondary" onPress={() => router.push('/login')} />
         </>
       ) : (
-        <Button variant="secondary" label="Sign out" onPress={async () => { await supabase?.auth.signOut(); await refresh(); }} />
+        <>
+          <Text style={type.body}>Signed in as {session.email}</Text>
+          <Button label="Sign out" variant="secondary" loading={busy} onPress={signOut} />
+        </>
       )}
+      {error ? <Banner kind="error">{error}</Banner> : null}
     </>
   );
 }

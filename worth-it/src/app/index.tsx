@@ -2,31 +2,24 @@ import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { formatInr } from '../lib/format';
 import { repo } from '../lib/repo';
-import { CHOICES, CHOICE_LABEL, PollSummary } from '../lib/types';
+import { CHOICES, CHOICE_LABEL, PollExtras, PollSummary } from '../lib/types';
 import { useApp } from '../ui/AppContext';
+import { AppTabs } from '../ui/AppTabs';
 import { Banner, Button } from '../ui/kit';
 import { PostIdentity, PostPhoto } from '../ui/PostPresentation';
-import { SocialIcon, SocialIconName } from '../ui/SocialIcon';
+import { SocialIcon } from '../ui/SocialIcon';
+import { StarButton } from '../ui/StarButton';
 import { choiceBackground, choiceColor, colors, type } from '../ui/theme';
 
-function PollCard({ poll }: { poll: PollSummary }) {
+function PollCard({ poll, extras, onStar }: { poll: PollSummary; extras?: PollExtras; onStar: (next: boolean) => Promise<void> }) {
   const open = () => router.push('/p/' + poll.id);
   const votes = poll.voteCount === 1 ? '1 vote' : poll.voteCount + ' votes';
 
   return (
     <View style={styles.card}>
       <PostIdentity poll={poll} mine={!poll.isDemo} />
-      <Pressable
-        testID={'poll-card-' + poll.id}
-        accessibilityRole="link"
-        accessibilityLabel={poll.itemName + ', ' + formatInr(poll.priceInr)}
-        onPress={open}
-        style={({ pressed }) => pressed && styles.pressed}
-      >
-        <PostPhoto poll={poll} />
-      </Pressable>
+      <PostPhoto poll={poll} onOpen={open} testID={'poll-card-' + poll.id} legacySource={extras?.productUrl ?? undefined} />
 
       <View style={styles.postBody}>
         <Text style={styles.itemTitle}>{poll.itemName}</Text>
@@ -52,9 +45,10 @@ function PollCard({ poll }: { poll: PollSummary }) {
             <Text style={styles.voteLinkText}>{votes}</Text>
             <SocialIcon name="arrow" color={colors.accent} />
           </Pressable>
-          {poll.updateStatus ? (
-            <Text style={styles.updateStatus}>{poll.updateStatus === 'bought' ? 'Bought' : 'Passed'}</Text>
-          ) : null}
+          <View style={styles.postActions}>
+            {poll.updateStatus ? <Text style={styles.updateStatus}>{poll.updateStatus === 'bought' ? 'Bought' : 'Passed'}</Text> : null}
+            <StarButton subject="poll" starred={extras?.starred ?? false} count={extras?.stars ?? 0} onToggle={onStar} />
+          </View>
         </View>
       </View>
     </View>
@@ -70,37 +64,6 @@ function Wordmark() {
   );
 }
 
-function NavItem({
-  icon, label, onPress, desktop, active, testID,
-}: {
-  icon: SocialIconName;
-  label: string;
-  onPress: () => void;
-  desktop: boolean;
-  active?: boolean;
-  testID?: string;
-}) {
-  const create = icon === 'plus';
-  return (
-    <Pressable
-      testID={testID}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ selected: !!active }}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.navItem, desktop ? styles.railItem : styles.barItem,
-        desktop && active && styles.railSelected, pressed && styles.pressed,
-      ]}
-    >
-      <View style={create && styles.createIcon}>
-        <SocialIcon name={icon} color={create ? colors.surface : active ? colors.accent : colors.muted} />
-      </View>
-      <Text style={[styles.navText, desktop && styles.railText, active && styles.activeText]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 export default function Home() {
   const { session } = useApp();
   const { width } = useWindowDimensions();
@@ -108,6 +71,7 @@ export default function Home() {
   const desktop = width >= 880;
   const [mine, setMine] = useState<PollSummary[]>([]);
   const [demo, setDemo] = useState<PollSummary[]>([]);
+  const [extras, setExtras] = useState<Record<string, PollExtras>>({});
   const [filter, setFilter] = useState<'feed' | 'mine'>('feed');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -119,6 +83,8 @@ export default function Home() {
       const [myPolls, demoPolls] = await Promise.all([repo.listMyPolls(), repo.listDemoPolls()]);
       setMine(myPolls);
       setDemo(demoPolls);
+      const reactions = await repo.getPollExtras([...myPolls, ...demoPolls].map((poll) => poll.id)).catch(() => ({}));
+      setExtras(reactions);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load polls.');
@@ -132,19 +98,7 @@ export default function Home() {
   const polls = filter === 'mine' ? mine : [...mine, ...demo];
   const local = repo.mode === 'local';
   const newPoll = () => router.push('/new');
-  const navigation = (
-    <>
-      <NavItem icon="feed" label="Feed" desktop={desktop} active={filter === 'feed'} onPress={() => setFilter('feed')} />
-      <NavItem icon="plus" label="New poll" desktop={desktop} testID="new-poll" onPress={newPoll} />
-      <NavItem
-        icon="person"
-        label={local ? 'Demo tools' : 'Account'}
-        desktop={desktop}
-        testID="account-link"
-        onPress={() => router.push('/account')}
-      />
-    </>
-  );
+  const navigation = <AppTabs active="feed" desktop={desktop} onFeed={() => setFilter('feed')} />;
 
   return (
     <View style={[styles.page, { paddingTop: insets.top }]}>
@@ -153,7 +107,7 @@ export default function Home() {
         {desktop && (
           <View style={styles.rail}>
             <Wordmark />
-            <View style={styles.railNav}>{navigation}</View>
+            {navigation}
           </View>
         )}
         <ScrollView
@@ -189,11 +143,14 @@ export default function Home() {
                 <Button label="Create a poll" onPress={newPoll} />
               </View>
             )}
-            {polls.map((poll) => <PollCard key={poll.id} poll={poll} />)}
+            {polls.map((poll) => <PollCard key={poll.id} poll={poll} extras={extras[poll.id]} onStar={async (starred) => {
+              const reaction = await repo.setPollStar(poll.id, starred);
+              setExtras((current) => ({ ...current, [poll.id]: reaction }));
+            }} />)}
           </View>
         </ScrollView>
       </View>
-      {!desktop && <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 7) }]}>{navigation}</View>}
+      {!desktop && navigation}
     </View>
   );
 }
@@ -207,16 +164,6 @@ const styles = StyleSheet.create({
   brand: { color: colors.ink, fontSize: 25, fontWeight: '900', letterSpacing: -1.25 },
   mobileHeader: { paddingHorizontal: 17, minHeight: 60, justifyContent: 'center', backgroundColor: colors.surface, borderBottomWidth: 1, borderColor: colors.border },
   rail: { width: 208, paddingHorizontal: 20, paddingTop: 29, borderRightWidth: 1, borderColor: colors.border, gap: 41 },
-  railNav: { gap: 9 },
-  navItem: { alignItems: 'center', borderRadius: 13 },
-  railItem: { flexDirection: 'row', paddingHorizontal: 13, minHeight: 51, gap: 11 },
-  railSelected: { backgroundColor: colors.accentSoft },
-  barItem: { flex: 1, justifyContent: 'center', minHeight: 51, gap: 3 },
-  navText: { fontSize: 11, fontWeight: '700', color: colors.muted },
-  railText: { fontSize: 15 },
-  activeText: { color: colors.accent },
-  createIcon: { borderRadius: 9, width: 30, height: 30, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
-  bottomBar: { flexDirection: 'row', backgroundColor: colors.surface, borderTopWidth: 1, borderColor: colors.border, paddingTop: 4, paddingHorizontal: 12 },
   scroll: { flex: 1 },
   scrollContent: { alignItems: 'center', paddingHorizontal: 13, paddingTop: 17, paddingBottom: 28 },
   feed: { width: '100%', maxWidth: 552, gap: 13 },
@@ -238,6 +185,7 @@ const styles = StyleSheet.create({
   choice: { flexGrow: 1, minHeight: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
   choiceText: { fontSize: 13, fontWeight: '700' },
   postFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  postActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   voteLink: { flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 44, alignSelf: 'flex-start' },
   voteLinkText: { color: colors.accent, fontSize: 13, fontWeight: '700' },
   updateStatus: { color: colors.buy, fontSize: 13, fontWeight: '700' },

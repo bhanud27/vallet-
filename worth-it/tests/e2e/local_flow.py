@@ -51,7 +51,7 @@ with sync_playwright() as p:
     expect(page.get_by_test_id("price")).to_have_value("2499")
     expect(page.get_by_test_id("question")).to_have_value("Worth it for daily walking?")
     page.get_by_test_id("publish").click()
-    expect(page.get_by_text("Add one product photo.").first).to_be_visible()
+    expect(page.get_by_text("Add a photo, video, or product link.").first).to_be_visible()
     ok("publishing without a photo shows a clear validation error")
     with page.expect_file_chooser() as fc:
         page.get_by_test_id("pick-photo").click()

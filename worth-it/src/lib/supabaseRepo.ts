@@ -1,20 +1,23 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { appSession } from './auth';
 import {
-  AppError, Choice, Poll, PollSummary, PollView, PurchaseUpdate, Repo, Session, VoteEntry,
+  AppError, Choice, NewPollMedia, Poll, PollExtras, PollMedia, PollSummary, PollView, PurchaseUpdate, Repo, Session, VoteEntry,
 } from './types';
-import { normaliseUpdate, validatePoll, validateUpdate, validateVote } from './validation';
+import { normaliseUpdate, parseProductUrl, validatePoll, validateUpdate, validateVote } from './validation';
 
 const BUCKET = 'poll-photos';
+const mediaBucket = (kind: PollMedia['kind']) => kind === 'video' ? 'social-media' : BUCKET;
+interface ExtrasRow { id: string; product_url: string | null; stars: number; starred: boolean }
 
 interface Deps {
   client: SupabaseClient;
   /** Returns JPEG bytes for the picked photo (resized, EXIF removed). */
   prepareUpload(photo: { uri: string }): Promise<{ bytes: ArrayBuffer }>;
+  prepareVideo(video: Extract<NewPollMedia, { kind: 'video' }>['file']): Promise<ArrayBuffer>;
   uuid(): string;
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-export function createSupabaseRepo({ client, prepareUpload, uuid }: Deps): Repo {
+export function createSupabaseRepo({ client, prepareUpload, prepareVideo, uuid }: Deps): Repo {
   const photoUrl = (path: string | null) => (path ? client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl : null);
 
   const toPoll = (r: any): Poll => ({
@@ -22,6 +25,7 @@ export function createSupabaseRepo({ client, prepareUpload, uuid }: Deps): Repo 
     imageUrl: photoUrl(r.image_path), demoImage: r.demo_image ?? null, isDemo: !!r.is_demo, createdAt: r.created_at,
   });
   const toSummary = (r: any): PollSummary => ({ ...toPoll(r), voteCount: Number(r.vote_count ?? 0), updateStatus: r.update_status ?? null });
+  const toExtras = (r: ExtrasRow): PollExtras => ({ productUrl: r.product_url, stars: Number(r.stars), starred: r.starred });
   const toVote = (r: any): VoteEntry => ({ id: r.id, choice: r.choice as Choice, reason: r.reason, ownsItem: !!r.owns_item, createdAt: r.created_at });
   const toUpdate = (r: any): PurchaseUpdate => ({
     status: r.status, pricePaidInr: r.price_paid_inr, review: r.review, storeUrl: r.store_url,
@@ -44,7 +48,19 @@ export function createSupabaseRepo({ client, prepareUpload, uuid }: Deps): Repo 
     const { data } = await client.auth.getSession();
     const u = data.session?.user;
     if (!u) throw new AppError('unknown', 'Not signed in.');
-    return { userId: u.id, isGuest: !!u.is_anonymous, email: u.email ?? null };
+    return appSession(u);
+  }
+
+  const publicMedia = (items: PollMedia[]) => items.map((item) => ({
+    ...item, value: client.storage.from(mediaBucket(item.kind)).getPublicUrl(item.value).data.publicUrl,
+  }));
+
+  async function attachMedia<T extends Poll>(polls: T[]): Promise<T[]> {
+    if (!polls.length) return polls;
+    const { data, error } = await client.rpc('get_poll_media', { p_ids: polls.map((poll) => poll.id) });
+    if (error) return polls;
+    const galleries = new Map((data as { id: string; media: PollMedia[] }[]).map((row) => [row.id, publicMedia(row.media)]));
+    return polls.map((poll) => galleries.has(poll.id) ? { ...poll, media: galleries.get(poll.id) } : poll);
   }
 
   return {
@@ -75,29 +91,37 @@ export function createSupabaseRepo({ client, prepareUpload, uuid }: Deps): Repo 
     async listMyPolls() {
       const { data, error } = await client.rpc('list_polls', { p_demo: false });
       if (error) throw mapError(error);
-      return (data as any[]).map(toSummary);
+      return attachMedia((data as any[]).map(toSummary));
     },
 
     async createPoll(input) {
       validatePoll(input);
       const session = await currentSession();
-      const path = `${session.userId}/${uuid()}.jpg`;
+      const uploaded: PollMedia[] = [];
+      const attachments: NewPollMedia[] = input.media ?? (input.photo ? [{ kind: 'image', file: input.photo }] : []);
       try {
-        const { bytes } = await prepareUpload(input.photo);
-        const { error } = await client.storage.from(BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false });
+        for (const item of attachments) {
+          const video = item.kind === 'video';
+          const value = `${session.userId}/${uuid()}.${video ? 'mp4' : 'jpg'}`;
+          const bytes = item.kind === 'video' ? await prepareVideo(item.file) : (await prepareUpload(item.file)).bytes;
+          uploaded.push({ kind: item.kind, value, sourceUrl: item.sourceUrl });
+          const { error } = await client.storage.from(mediaBucket(item.kind)).upload(value, bytes, {
+            contentType: video ? 'video/mp4' : 'image/jpeg', upsert: false,
+          });
+          if (error) throw error;
+        }
+        const { data, error } = await client.from('polls').insert({
+          author_id: session.userId, item_name: input.itemName.trim(), price_inr: input.priceInr,
+          question: input.question.trim(), image_path: uploaded.find((item) => item.kind === 'image')?.value ?? null,
+          ...(input.productUrl ? { product_url: parseProductUrl(input.productUrl) } : {}),
+          ...(input.media?.length ? { media_gallery: uploaded } : {}),
+        }).select('id, item_name, price_inr, question, image_path, demo_image, is_demo, created_at').single();
         if (error) throw error;
-      } catch (e: any) {
-        throw new AppError('upload_failed', `Photo upload failed. Nothing was published. Check your connection and try again.${e?.message ? ` (${e.message})` : ''}`);
+        return { ...toPoll(data), ...(input.media?.length ? { media: publicMedia(uploaded) } : {}) };
+      } catch (error) {
+        await Promise.allSettled(uploaded.map((item) => client.storage.from(mediaBucket(item.kind)).remove([item.value])));
+        throw mapError(error, 'Could not upload media or publish the poll.');
       }
-      const { data, error } = await client.from('polls').insert({
-        author_id: session.userId, item_name: input.itemName.trim(), price_inr: input.priceInr,
-        question: input.question.trim(), image_path: path,
-      }).select('id, item_name, price_inr, question, image_path, demo_image, is_demo, created_at').single();
-      if (error) {
-        await client.storage.from(BUCKET).remove([path]); // best effort: don't leave an orphaned photo behind
-        throw mapError(error, 'Could not publish the poll.');
-      }
-      return toPoll(data);
     },
 
     async getPollView(id) {
@@ -105,10 +129,24 @@ export function createSupabaseRepo({ client, prepareUpload, uuid }: Deps): Repo 
       if (error) throw mapError(error);
       if (!data) return null;
       const d = data as any;
+      const [poll] = await attachMedia([toPoll(d.poll)]);
       return {
-        poll: toPoll(d.poll), votes: (d.votes as any[]).map(toVote),
+        poll, votes: (d.votes as any[]).map(toVote),
         update: d.update ? toUpdate(d.update) : null, isAuthor: !!d.is_author, myChoice: (d.my_choice as Choice) ?? null,
       } satisfies PollView;
+    },
+
+    async getPollExtras(ids) {
+      if (!ids.length) return {};
+      const { data, error } = await client.rpc('get_poll_extras', { p_ids: ids });
+      if (error) throw mapError(error, 'Could not load stars.');
+      return Object.fromEntries((data as ExtrasRow[]).map((row) => [row.id, toExtras(row)]));
+    },
+
+    async setPollStar(id, starred) {
+      const { data, error } = await client.rpc('set_poll_star', { p_id: id, p_starred: starred });
+      if (error) throw mapError(error, 'Could not update your star.');
+      return toExtras(data as ExtrasRow);
     },
 
     async castVote(id, input) {

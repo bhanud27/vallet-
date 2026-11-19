@@ -55,11 +55,15 @@ export function Banner({ kind, children, testID }: { kind: 'info' | 'warn' | 'er
   );
 }
 
-export function Field({ label, hint, error, ...input }: { label: string; hint?: string; error?: string } & TextInputProps) {
+export function Field({ label, hint, error, labelAction, ...input }: {
+  label: string; hint?: string; error?: string; labelAction?: ReactNode;
+} & TextInputProps) {
   const [focus, setFocus] = useState(false);
   return (
     <View style={{ gap: 6 }}>
-      <Text style={s.label}>{label}</Text>
+      {labelAction ? (
+        <View style={s.fieldHeading}><Text style={s.label}>{label}</Text>{labelAction}</View>
+      ) : <Text style={s.label}>{label}</Text>}
       <TextInput
         {...input} accessibilityLabel={label} placeholderTextColor="#8A93A3"
         onFocus={(e) => { setFocus(true); input.onFocus?.(e); }} onBlur={(e) => { setFocus(false); input.onBlur?.(e); }}
@@ -109,6 +113,7 @@ const s = StyleSheet.create({
   btnText: { fontSize: 15, fontWeight: '700' },
   banner: { borderRadius: 12, padding: 12 },
   label: { fontSize: 15, fontWeight: '700', color: colors.ink },
+  fieldHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   input: { borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 17, color: colors.ink, minHeight: 50 },
   badge: { alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   tag: { backgroundColor: colors.tag, borderRadius: 10, alignSelf: 'flex-start', justifyContent: 'center' },

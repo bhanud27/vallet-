@@ -1,13 +1,14 @@
 import { Link, Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { repo } from '../../lib/repo';
-import { CHOICES, CHOICE_LABEL, PollView } from '../../lib/types';
+import { CHOICES, CHOICE_LABEL, PollExtras, PollView } from '../../lib/types';
 import { DEMO_NOTE } from '../../lib/demoData';
 import { useApp } from '../../ui/AppContext';
 import { Banner, Button, Centered, Screen } from '../../ui/kit';
 import { PostIdentity, PostPhoto } from '../../ui/PostPresentation';
 import { Results } from '../../ui/Results';
+import { StarButton } from '../../ui/StarButton';
 import { SharePanel } from '../../ui/SharePanel';
 import { UpdateSection } from '../../ui/UpdateSection';
 import { VoteForm } from '../../ui/VoteForm';
@@ -17,6 +18,7 @@ export default function PollScreen() {
   const { id, choice } = useLocalSearchParams<{ id: string; choice?: string }>();
   const { session } = useApp();
   const [view, setView] = useState<PollView | null>(null);
+  const [extras, setExtras] = useState<PollExtras>();
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>('loading');
   const [error, setError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -25,8 +27,12 @@ export default function PollScreen() {
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const v = await repo.getPollView(String(id));
+      const [v, reactions] = await Promise.all([
+        repo.getPollView(String(id)),
+        repo.getPollExtras([String(id)]).then((all) => all[String(id)]).catch(() => undefined),
+      ]);
       if (!v) { setStatus('missing'); return; }
+      setExtras(reactions);
       setView(v); setStatus('ready'); setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load this poll.');
@@ -52,6 +58,7 @@ export default function PollScreen() {
   );
 
   const { poll, votes, update, isAuthor, myChoice } = view;
+  const hasImageLink = poll.media?.length ? poll.media.some((item) => item.sourceUrl) : !!poll.imageUrl;
   const canVote = !isAuthor && !myChoice && (!poll.isDemo || repo.demoVotingEnabled);
   const initialChoice = CHOICES.find((option) => option === choice);
 
@@ -63,10 +70,17 @@ export default function PollScreen() {
 
       <View style={styles.post}>
         <PostIdentity poll={poll} mine={isAuthor} />
-        <PostPhoto poll={poll} />
+        <PostPhoto poll={poll} legacySource={extras?.productUrl ?? undefined} />
         <View style={styles.caption}>
           <Text style={type.title} testID="item-title">{poll.itemName}</Text>
           <Text style={type.body} testID="poll-question">{poll.question}</Text>
+          <View style={styles.actions}>
+            {extras?.productUrl && !hasImageLink ? <Pressable accessibilityRole="link" style={styles.storeLink} onPress={() => {
+              if (extras.productUrl) void Linking.openURL(extras.productUrl).catch(() => setError('Could not open the product link.'));
+            }}><Text style={styles.linkText}>View product</Text></Pressable> : <View />}
+            <StarButton subject="poll" starred={extras?.starred ?? false} count={extras?.stars ?? 0}
+              onToggle={async (starred) => setExtras(await repo.setPollStar(poll.id, starred))} />
+          </View>
         </View>
       </View>
 
@@ -93,4 +107,7 @@ export default function PollScreen() {
 const styles = StyleSheet.create({
   post: { backgroundColor: colors.surface, borderRadius: 17, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' },
   caption: { padding: 15, gap: 5 },
+  actions: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  storeLink: { minHeight: 44, justifyContent: 'center' },
+  linkText: { color: colors.accent, fontWeight: '700' },
 });

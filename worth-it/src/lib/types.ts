@@ -1,3 +1,5 @@
+import type { SelectedVideo } from './socialVideo';
+
 export type Choice = 'buy' | 'wait' | 'skip';
 export const CHOICES: Choice[] = ['buy', 'wait', 'skip'];
 export const CHOICE_LABEL: Record<Choice, string> = {
@@ -15,6 +17,7 @@ export interface Poll {
   imageUrl: string | null;
   /** Key into the bundled demo artwork. */
   demoImage: string | null;
+  media?: PollMedia[];
   isDemo: boolean;
   createdAt: string;
 }
@@ -53,13 +56,35 @@ export interface Session {
   userId: string;
   isGuest: boolean;
   email: string | null;
+  needsPassword?: boolean;
 }
 
 export interface NewPollInput {
   itemName: string;
   priceInr: number;
   question: string;
-  photo: PickedPhoto;
+  photo?: PickedPhoto | null;
+  media?: NewPollMedia[];
+  productUrl?: string;
+}
+
+export interface PollExtras {
+  productUrl: string | null;
+  stars: number;
+  starred: boolean;
+}
+
+export const MAX_POLL_MEDIA = 24;
+
+export type NewPollMedia =
+  | { kind: 'image'; file: PickedPhoto; sourceUrl?: string }
+  | { kind: 'video'; file: SelectedVideo; sourceUrl?: never };
+
+export interface PollMedia {
+  kind: 'image' | 'video';
+  value: string;
+  device?: boolean;
+  sourceUrl?: string;
 }
 
 export interface PickedPhoto {
@@ -111,6 +136,8 @@ export interface Repo {
   listMyPolls(): Promise<PollSummary[]>;
   createPoll(input: NewPollInput): Promise<Poll>;
   getPollView(id: string): Promise<PollView | null>;
+  getPollExtras(ids: string[]): Promise<Record<string, PollExtras>>;
+  setPollStar(id: string, starred: boolean): Promise<PollExtras>;
   castVote(id: string, input: VoteInput): Promise<void>;
   savePurchaseUpdate(id: string, input: UpdateInput): Promise<PurchaseUpdate>;
   /** Public helper so the UI can show the right photo URL. */

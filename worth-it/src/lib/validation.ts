@@ -1,4 +1,4 @@
-import { AppError, CHOICES, NewPollInput, UpdateInput, VoteInput } from './types';
+import { AppError, CHOICES, MAX_POLL_MEDIA, NewPollInput, UpdateInput, VoteInput } from './types';
 
 export const LIMITS = {
   itemName: 80,
@@ -6,6 +6,7 @@ export const LIMITS = {
   reason: 280,
   review: 280,
   url: 500,
+  productUrl: 2048,
   maxPriceInr: 10_000_000,
 };
 
@@ -25,7 +26,21 @@ export function isHttpUrl(value: string): boolean {
   }
 }
 
-export function validatePoll(input: Omit<NewPollInput, 'photo'> & { photo: unknown }): void {
+export function parseProductUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > LIMITS.productUrl) return null;
+  try {
+    const url = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
+    if (url.protocol !== 'https:' || url.port || url.username || url.password || !url.hostname.includes('.') ||
+      /^[\d.]+$/.test(url.hostname) || /\.(local|internal|localhost|home|lan)\.?$/i.test(url.hostname)) return null;
+    url.hash = '';
+    return url.href.length <= LIMITS.productUrl ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export function validatePoll(input: NewPollInput): void {
   const name = input.itemName.trim();
   const q = input.question.trim();
   if (!name) throw new AppError('invalid', 'Enter the item name.');
@@ -34,7 +49,12 @@ export function validatePoll(input: Omit<NewPollInput, 'photo'> & { photo: unkno
     throw new AppError('invalid', 'Enter the asking price in rupees, for example 2499.');
   if (!q) throw new AppError('invalid', 'Write the question you want answered.');
   if (q.length > LIMITS.question) throw new AppError('invalid', `Question must be ${LIMITS.question} characters or fewer.`);
-  if (!input.photo) throw new AppError('invalid', 'Add one product photo.');
+  if (input.productUrl && !parseProductUrl(input.productUrl)) throw new AppError('invalid', 'Enter a valid HTTPS product link.');
+  if ((input.media?.length ?? 0) > MAX_POLL_MEDIA) throw new AppError('invalid', `Add up to ${MAX_POLL_MEDIA} media items.`);
+  if (input.media?.some((item) => item.sourceUrl && !parseProductUrl(item.sourceUrl))) {
+    throw new AppError('invalid', 'An imported image has an invalid product link.');
+  }
+  if (!input.photo && !input.media?.length && !input.productUrl) throw new AppError('invalid', 'Add one product photo.');
 }
 
 export function validateVote(input: VoteInput): void {

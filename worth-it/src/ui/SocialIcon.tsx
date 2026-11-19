@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { colors } from './theme';
 
-export type SocialIconName = 'feed' | 'plus' | 'person' | 'message' | 'arrow' | 'photo';
+export type SocialIconName = 'feed' | 'reels' | 'plus' | 'person' | 'message' | 'arrow' | 'photo';
 
 export function SocialIcon({ name, color = colors.ink }: { name: SocialIconName; color?: string }) {
   const stroke = { borderColor: color };
@@ -17,6 +17,7 @@ export function SocialIcon({ name, color = colors.ink }: { name: SocialIconName;
         </View>
       )}
       {name === 'plus' && <><View style={[styles.horizontal, fill]} /><View style={[styles.vertical, fill]} /></>}
+      {name === 'reels' && <View style={[styles.reel, stroke]}><View style={[styles.play, { borderLeftColor: color }]} /></View>}
       {name === 'person' && <><View style={[styles.head, stroke]} /><View style={[styles.shoulders, stroke]} /></>}
       {name === 'message' && <><View style={[styles.bubble, stroke]} /><View style={[styles.tail, stroke]} /></>}
       {name === 'arrow' && <View style={[styles.arrow, stroke]} />}
@@ -34,6 +35,8 @@ const styles = StyleSheet.create({
   icon: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
   feed: { width: 18, height: 18, borderWidth: 2, borderRadius: 5, padding: 3, gap: 3 },
   feedLine: { height: 2, width: '100%', borderRadius: 1 },
+  reel: { width: 17, height: 20, borderWidth: 2, borderRadius: 5, alignItems: 'center', justifyContent: 'center' },
+  play: { marginLeft: 1, borderLeftWidth: 6, borderTopWidth: 4, borderBottomWidth: 4, borderTopColor: 'transparent', borderBottomColor: 'transparent' },
   horizontal: { position: 'absolute', width: 15, height: 2, borderRadius: 1 },
   vertical: { position: 'absolute', width: 2, height: 15, borderRadius: 1 },
   head: { position: 'absolute', top: 3, width: 8, height: 8, borderWidth: 2, borderRadius: 4 },
