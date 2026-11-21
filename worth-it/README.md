@@ -27,23 +27,23 @@ npm run web        # browser at http://localhost:8081
 npm start          # Expo dev server; press i / a, or scan the QR code with Expo Go
 ```
 
-Since a second phone can't see your local data, test voting on one device with **Profile → Demo tools → Act as a new guest** and **Back to my identity**.
+Since a second phone can't see your local data, test voting on one device with **Profile â†’ Demo tools â†’ Act as a new guest** and **Back to my identity**.
 
-Open **Profile → Edit profile** to set your display name, photo, and bio or view your polls and reels. Open **Reels** to swipe through the sample videos, or choose **New reel** to publish an MP4 up to 20 MB. Local profiles, videos, and stars stay on the device. In connected mode, reels and their authors' names and photos appear in the shared feed.
+Open **Profile â†’ Edit profile** to set your username, photo, and bio. The connected Feed combines polls and reels from accounts you follow. Your polls are available from your profile. Search shows recent public polls and suggested reels. Swipe in **Reels** to play a mix of discovery clips and followed accounts, roughly nine discovery reels per followed reel when both are available. Your mute choice is saved on this device. Choose **New reel** to publish an MP4 up to 20 MB. Local profiles, videos, and stars stay on the device.
 
-Use the star on a poll or reel to add or remove your reaction. A poll gallery can mix photos and MP4 videos (up to 20 MB each) in any order, with up to 24 media items. Pasting an HTTPS store link adds available product images to the gallery and fills the name and INR price when exposed by the store. Each imported photo has a View product button. Stores that block previews can still be linked from a poll, with or without uploaded media.
+Use the star on a poll or reel to add or remove your reaction. A poll gallery can mix up to 24 photos and MP4 videos. Photos keep their dimensions, are re-encoded as JPEG up to 15 MB, and open in a full-size viewer. MP4 videos can be up to 20 MB each. Paste a product URL or retailer share message into the link field to import any available gallery, name, and INR price. Each imported photo has a View product button. If a retailer makes its previews unavailable, the link can still be saved and photos can be added manually.
 
 Expo's local server handles previews on the same port. For hosted builds, run `npm run import:server` behind an HTTPS endpoint and set `EXPO_PUBLIC_PRODUCT_IMPORT_URL` to that endpoint's origin before building. If the web app is on a different origin, set `PRODUCT_IMPORT_ORIGIN` to its origin on the importer.
 
 ## Set up connected mode (needed for the real two-phone test)
 
 1. **Create a Supabase project** at supabase.com.
-2. **Configure sign-in.** In **Authentication → Sign In / Providers**, keep the Email provider enabled. Enable **Allow anonymous sign-ins** for guest polls and **Allow manual linking** so guests can turn the same identity into an email account. Keep **Confirm email** enabled for live use. Add your web app's `/auth-confirm` URL in **Authentication → URL Configuration → Redirect URLs** (for example, `http://localhost:8082/auth-confirm`). Native builds can use your configured `EXPO_PUBLIC_WEB_URL` for confirmation or an allowlisted app deep link.
+2. **Configure sign-in.** In **Authentication â†’ Sign In / Providers**, keep the Email provider enabled. Enable **Allow anonymous sign-ins** for guest polls and **Allow manual linking** so guests can turn the same identity into an email account. Keep **Confirm email** enabled for live use. Add your web app's `/auth-confirm` URL in **Authentication â†’ URL Configuration â†’ Redirect URLs** (for example, `http://localhost:8082/auth-confirm`). Native builds can use your configured `EXPO_PUBLIC_WEB_URL` for confirmation or an allowlisted app deep link.
 3. **Create the schema.** Either paste these files, in order, into the dashboard SQL Editor:
-   `supabase/migrations/0001_init.sql` (polls and storage), `supabase/migrations/0002_demo_seed.sql` (sample polls), `supabase/migrations/0003_social.sql` (profiles and reels), `supabase/migrations/0004_poll_stars_and_links.sql` (poll stars and store links), `supabase/migrations/0005_poll_media_gallery.sql` (mixed media galleries), `supabase/migrations/0006_auth_profiles.sql` (signup profiles), and `supabase/migrations/0007_unique_usernames.sql` (unique usernames),
+   `supabase/migrations/0001_init.sql` (polls and storage), `supabase/migrations/0002_demo_seed.sql` (sample polls), `supabase/migrations/0003_social.sql` (profiles and reels), `supabase/migrations/0004_poll_stars_and_links.sql` (poll stars and store links), `supabase/migrations/0005_poll_media_gallery.sql` (mixed media galleries), `supabase/migrations/0006_auth_profiles.sql` (signup profiles), `supabase/migrations/0007_unique_usernames.sql` (unique usernames), and `supabase/migrations/0008_follows_and_privacy.sql` (search, follows and private accounts),
    or with the Supabase CLI: `supabase link --project-ref <ref> && supabase db push`.
-   If migrations 0001 through 0006 are already applied, run only 0007 before releasing the username form. Existing profiles with a valid, unused name keep its lowercase form, and other profiles receive an editable username.
-4. **Add keys.** `cp .env.example .env` and fill in the Project URL and the **anon** key (Project Settings → API). Never put the `service_role` key in this project; nothing here needs it, and `EXPO_PUBLIC_*` values are visible to anyone who opens the app.
+   Apply only migrations that are still pending. Migration 0008 changes both media buckets to private. Release the client with signed media URLs alongside this migration so existing media continues to load. Migration `0009_comments_reel_links_notifications.sql` adds poll and reel comments, reel product links, and account activity in Notifications. Migration `0010_shopping_decisions.sql` adds question discovery, buying context, helpful vote reasons, product history, and after-buy outcomes and notifications. Migration `0011_full_size_photos.sql` raises the photo bucket limit to 15 MB. The project-wide Storage upload limit must accommodate that size.
+4. **Add keys.** `cp .env.example .env` and fill in the Project URL and the **anon** key (Project Settings â†’ API). Never put the `service_role` key in this project; nothing here needs it, and `EXPO_PUBLIC_*` values are visible to anyone who opens the app.
 5. **Host the web build.** `EXPO_PUBLIC_*` values are baked in at build time, so build with them set:
    ```bash
    npm run export:web          # creates dist/
@@ -53,14 +53,14 @@ Expo's local server handles previews on the same port. For hosted builds, run `n
 
 ## Repeat the two-phone test
 
-1. **Phone A:** open your hosted URL → **Ask: is it worth it?** → choose a photo, keep ₹2,499 and "Worth it for daily walking?" → **Publish poll**. Read the visibility warning, then **Copy link**.
+1. **Phone A:** open your hosted URL â†’ **Ask: is it worth it?** â†’ choose a photo, keep â‚¹2,499 and "Worth it for daily walking?" â†’ **Publish poll**. Read the visibility warning, then **Copy link**.
 2. Send the link to phone B (any messenger).
 3. **Phone B:** open the link in the browser. No install, no sign-in. Tap **Wait for a sale**, type a reason, optionally tick "I own this item", **Submit vote**. You should see "Vote submitted" and your reason in the results. Reload: the vote form is gone (one vote per browser session).
 4. **Phone A:** open the poll and tap **Refresh results** (or pull down). The vote and reason appear.
 5. **Phone A:** under **Purchase update** choose **Bought**, enter the price paid, a short review and a sample store link (`https://example.com/shoes`), tick the affiliate box to see the disclosure, **Post update**.
 6. **Phone B:** reload. The update is visible, with the affiliate disclosure, and there are no edit controls. (The database also refuses edits from anyone but the author; see the policy tests below.)
 
-If phone A clears its browser data it loses guest access to its polls. **Account → Save your account** upgrades the guest to an email login to prevent that.
+If phone A clears its browser data it loses guest access to its polls. **Account â†’ Save your account** upgrades the guest to an email login to prevent that.
 
 ## Tests
 
@@ -84,9 +84,10 @@ It checks: one vote per account, authors cannot vote on their own poll, visitors
 
 ## How sharing and privacy work
 
-- Each poll has a random UUID; the link is `/p/<uuid>`. Tables are **not** publicly readable. Visitors read a poll only through the `get_poll_view(id)` function, so there is no way to list other people's polls.
+- Each poll has a random UUID and a link at `/p/<uuid>`. Poll access is checked by the database. Signed-in users can find public profiles by username and see their posts. Set visibility in **Profile â†’ Account settings â†’ Private account**. Private profiles require an approved follow for posts and reels. Accepted followers stay approved if an account turns private. Making an account public accepts pending requests.
+- Public polls can be read before sign-in and appear in Discover. The Needs an answer view prioritizes public polls with fewer written vote reasons and excludes polls with a purchase update or a reason marked helpful. Product history matches stored links exactly and displays shopper-reported prices. Buyers without an after-buy verdict see a reminder in Notifications after seven days.
 - Votes are written only through `cast_vote()`, which enforces one vote per `auth.uid()` per poll.
-- Photos go to a public Storage bucket under `<user id>/<random>.jpg`. **Anyone who has the link can see the photo**; the author is told this on the create screen and the share panel. Photos are re-encoded in the app before upload, which removes EXIF metadata such as GPS location.
+- Photos and reels use private Storage buckets with access policies. The client requests signed media URLs that expire after ten minutes. A URL issued while someone was allowed to view a file can keep working until expiry. Photos are re-encoded in the app before upload, which removes EXIF metadata such as GPS location.
 - Results and written reasons are visible to everyone with the link, including before they vote.
 - Poll edit and purchase-update permissions are enforced by row-level security (`auth.uid() = author_id`), not by the UI.
 
@@ -108,3 +109,24 @@ supabase/migrations 0001_init.sql (schema, RLS, RPCs, storage), 0002_demo_seed.s
 supabase/tests      policy tests for plain Postgres
 tests/              unit tests and browser flow
 ```
+
+## Reliability, security, and performance phases
+
+Phases 1-7 now have implementation changes: recoverable publishing/drafts, safety
+and moderation, paginated feed/media caching, resumable uploads and trusted media
+workers, aggregated/paged voting results, automated checks, saved polls, feedback,
+and data saver settings.
+
+**All new connected features require migrations 0012-0016.** Existing feeds, profiles, reels, poll results and notifications remain readable during rollout. CAPTCHA enforcement,
+trusted worker scheduling, and media quarantine require server configuration.
+No production database or deployment was changed by this implementation.
+
+See [the release and testing guide](docs/release-and-testing.md) for phase details,
+configuration, test cases, deployment requirements, and remaining verification.
+Run `npm run check` and `npm run export:web` before release.
+
+Post edit, archive/restore and permanent delete require migration **0017_post_management.sql** for connected accounts. Schedule `npm run worker:post-cleanup` on a trusted server to remove deleted uploads. See [post management setup](docs/release-and-testing.md#post-management-and-retailer-image-imports-migration-0017) for rollout instructions and verified retailer-import limitations.
+
+Database automation is available with `npm run db:status`, the one-time `npm run db:baseline`, and `npm run db:deploy`. After private admin credentials are configured, authorized feature work can include the database deployment. See [automated database updates](docs/release-and-testing.md#automated-database-updates). Existing migrations are immutable; use `npm run db:new -- change_name` for subsequent changes.
+
+Product extraction engine: see [architecture, retailer verification matrix, configuration and deployment](docs/product-extraction-engine.md).

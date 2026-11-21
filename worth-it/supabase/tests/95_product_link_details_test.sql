@@ -1,0 +1,20 @@
+begin;
+insert into auth.users(id) values ('c1000000-0000-4000-8000-000000000001'),('c1000000-0000-4000-8000-000000000002');
+set local role authenticated;
+set local "request.jwt.claim.sub"='c1000000-0000-4000-8000-000000000001';
+insert into public.polls(id,author_id,item_name,price_inr,question,product_url,product_details) values
+ ('c2000000-0000-4000-8000-000000000001',auth.uid(),'Imported shirt',999,'Worth it?','https://www.ajio.com/shirt/p/123','{"brand":"Store brand","description":"Cotton shirt","category":"Shirts","currency":"INR","price":999}');
+select public.t_eq(public.get_poll_view('c2000000-0000-4000-8000-000000000001')->'poll'->'product_details'->>'brand','Store brand','product metadata survives legacy detail');
+select public.t_eq(public.worthit_poll_page('c2000000-0000-4000-8000-000000000001')->'poll'->'product_details'->>'currency','INR','current detail preserves currency');
+select public.t_eq(public.list_polls(false)->0->'product_details'->>'description','Cotton shirt','profile serializer keeps description');
+select public.t_fails($$insert into public.polls(author_id,item_name,price_inr,question,product_url,product_details) values(auth.uid(),'Bad metadata',999,'Worth it?','https://example.com/item','{"brand":44}')$$,'violates check constraint','typed metadata is enforced');
+select public.t_fails($$insert into public.polls(author_id,item_name,price_inr,question,product_url,product_details) values(auth.uid(),'Bad currency',999,'Worth it?','https://example.com/item','{"currency":"RUPEES"}')$$,'violates check constraint','currency requires ISO-shaped code');
+select public.t_fails($$insert into public.polls(author_id,item_name,price_inr,question,product_url,product_details) values(auth.uid(),'Injected metadata',999,'Worth it?','https://example.com/item','{"author_id":"evil"}')$$,'violates check constraint','metadata keys are limited');
+select public.worthit_manage_post('poll','c2000000-0000-4000-8000-000000000001','edit','{"itemName":"Edited shirt","priceInr":999,"question":"Still worth it?","productUrl":"https://example.com/item","productDetails":{"brand":"My edit","currency":"USD","price":29.95}}');
+select public.t_eq(public.get_poll_view('c2000000-0000-4000-8000-000000000001')->'poll'->'product_details'->>'brand','My edit','owner can edit metadata');
+select public.worthit_manage_post('poll','c2000000-0000-4000-8000-000000000001','edit','{"itemName":"Edited shirt","priceInr":999,"question":"Still worth it?","productUrl":"https://example.com/item","productDetails":{}}');
+select public.t_eq(public.get_poll_view('c2000000-0000-4000-8000-000000000001')->'poll'->'product_details','{}'::jsonb,'owner can clear metadata');
+set local "request.jwt.claim.sub"='c1000000-0000-4000-8000-000000000002';
+select public.t_fails($$select public.worthit_manage_post('poll','c2000000-0000-4000-8000-000000000001','edit','{"productDetails":{"brand":"Stolen"}}')$$,'Only the owner','metadata does not bypass owner permissions');
+reset role;
+rollback;

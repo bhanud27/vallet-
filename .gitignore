@@ -1,0 +1,55 @@
+# Local dependencies and tool state
+node_modules/
+.expo/
+.cache/
+.parcel-cache/
+.turbo/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Generated builds, reports and local runtime files
+dist/
+build/
+coverage/
+htmlcov/
+.nyc_output/
+playwright-report/
+test-results/
+*.log
+*.tsbuildinfo
+*.tmp
+*.bak
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Credentials stay local; blank configuration examples stay versioned
+.env
+.env.*
+*.env
+!.env.example
+!.env.*.example
+!*.env.example
+!*.env.template
+credentials.json
+service-account*.json
+*-service-account.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Local editors and operating-system files
+.idea/
+.vscode/
+*.suo
+*.user
+.DS_Store
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,90 @@
+{
+  "through": "0017",
+  "migrations": [
+    {
+      "version": "0001",
+      "file": "0001_init.sql",
+      "sha256": "54b41e68ab5e9e8cd50c0553d750c8d84601628f968a6fbf828de5573b1e747e"
+    },
+    {
+      "version": "0002",
+      "file": "0002_demo_seed.sql",
+      "sha256": "67c990d20f2cd95c39d3a0cc2848872bd157f394caa34a90a39010d63f905b8e"
+    },
+    {
+      "version": "0003",
+      "file": "0003_social.sql",
+      "sha256": "ae062814ab0fafa938271df57cd52f7b936abedfd55d6f7c7e05743364c89135"
+    },
+    {
+      "version": "0004",
+      "file": "0004_poll_stars_and_links.sql",
+      "sha256": "ef62c77134b72546421122f65c591fa82785bfa2411c5cc08205e57411f8def0"
+    },
+    {
+      "version": "0005",
+      "file": "0005_poll_media_gallery.sql",
+      "sha256": "73c5fe27d42aa57c1b6dcd6d7e97119d4f4f5eb51a25bf3c91ee56423f6e5ac2"
+    },
+    {
+      "version": "0006",
+      "file": "0006_auth_profiles.sql",
+      "sha256": "bd41c5256be6e0cb24492d2032d455fae40a0b037aba825ce1ee29b62d832b22"
+    },
+    {
+      "version": "0007",
+      "file": "0007_unique_usernames.sql",
+      "sha256": "d90a5484302710659fd2c674f326f874992bbd85a8188af2eb9942a174f94f3a"
+    },
+    {
+      "version": "0008",
+      "file": "0008_follows_and_privacy.sql",
+      "sha256": "ad53ef9c56b394419ac2b9790fafc6e826ca92716b247705e2ac4bf1ebba295c"
+    },
+    {
+      "version": "0009",
+      "file": "0009_comments_reel_links_notifications.sql",
+      "sha256": "ebd80d88186ec4a905688dc652b7831a41399e55b74c0b28d50442899dcc0b57"
+    },
+    {
+      "version": "0010",
+      "file": "0010_shopping_decisions.sql",
+      "sha256": "4798efddd9975ac219055a9859319107f4a83aa61c17cf09531884afb7d45535"
+    },
+    {
+      "version": "0011",
+      "file": "0011_full_size_photos.sql",
+      "sha256": "cb80c1e2e3f9140d343779b6952c6f9ade4bc34e1d5e535d47e1a64d8a0d14ff"
+    },
+    {
+      "version": "0012",
+      "file": "0012_safety_and_accounts.sql",
+      "sha256": "c87bb09bf880dc2ba8e8a2e8909d2dfdf1fff6821ee809c6eb351fdeacbd85a7"
+    },
+    {
+      "version": "0013",
+      "file": "0013_media_and_pagination.sql",
+      "sha256": "727186d0c07c57d232b7642526ba18d9c7b3f5b5e72b1ae4befc223402b532cc"
+    },
+    {
+      "version": "0014",
+      "file": "0014_results_and_engagement.sql",
+      "sha256": "d00cbcb8b3cf69e797bac75ccaed7ffa70e60a951da29572b76b7a391802f81d"
+    },
+    {
+      "version": "0015",
+      "file": "0015_media_jobs.sql",
+      "sha256": "099d0d0071bfbf95e8ad8af5da897df38a921fe9150ba0088934b1af5479b967"
+    },
+    {
+      "version": "0016",
+      "file": "0016_operations.sql",
+      "sha256": "c9d1b705c04108fc6c350b314bdb270aac1e0731cfd3c98e041a56b45e783d9e"
+    },
+    {
+      "version": "0017",
+      "file": "0017_post_management.sql",
+      "sha256": "8d8bde0e7cdfcfecfb66be5af88a9d6561464b47fff1986a40339ff608194d77"
+    }
+  ]
+}

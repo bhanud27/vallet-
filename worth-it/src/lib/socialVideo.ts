@@ -107,9 +107,9 @@ async function removeDeviceMedia(id: string, kind: 'image' | 'video') {
 
 const devicePhoto = (id: string) => new File(Paths.document, 'worth-it-poll-images', `${id}.jpg`);
 
-export async function saveDevicePhoto(id: string, preparedUri: string) {
+export async function saveDevicePhoto(id: string, preparedUri: string, preparedBlob?: Blob) {
   if (Platform.OS === 'web') {
-    const blob = await selectedBlob({ uri: preparedUri });
+    const blob = preparedBlob ?? await selectedBlob({ uri: preparedUri });
     await withMediaStore('poll-images', 'readwrite', (store) => store.put(blob, id));
     return;
   }

@@ -63,7 +63,7 @@ with sync_playwright() as p:
     poll_url = page.url
     expect(page.get_by_test_id("item-title")).to_have_text("Sneakers")
     expect(page.get_by_test_id("share-url")).to_contain_text("/p/")
-    expect(page.get_by_text("Anyone with this link can view the photo").first).to_be_visible()
+    expect(page.get_by_text("Poll links follow the author", exact=False)).to_be_visible()
     expect(page.get_by_test_id("total-votes")).to_have_text("0 votes")
     expect(page.get_by_test_id("submit-vote")).to_have_count(0)
     ok("poll created: photo, price tag, share link, public-visibility warning; author has no vote form")

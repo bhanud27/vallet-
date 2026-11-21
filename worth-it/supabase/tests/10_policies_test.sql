@@ -96,16 +96,17 @@ select t_as(:B);
 select t_eq(get_poll_view(:P)->'update'->>'review', 'Great for walking', 'visitor sees purchase update');
 select t_eq((get_poll_view(:P)->'update'->>'is_affiliate')::boolean, true, 'visitor sees affiliate flag');
 with u as (update purchase_updates set price_paid_inr = 1 where poll_id = :P returning 1) select t_eq((select count(*) from u), 0::bigint, 'visitor update affects 0 rows');
-with u as (update polls set price_inr = 1 where id = :P returning 1) select t_eq((select count(*) from u), 0::bigint, 'visitor cannot edit poll');
-with d as (delete from polls where id = :P returning 1) select t_eq((select count(*) from d), 0::bigint, 'visitor cannot delete poll');
+select t_fails($$select worthit_manage_post('poll','11111111-0000-4000-8000-000000000001','edit','{}')$$,'Only the owner','visitor cannot edit poll');
+select t_fails($$select worthit_manage_post('poll','11111111-0000-4000-8000-000000000001','delete')$$,'Only the owner','visitor cannot delete poll');
 with d as (delete from purchase_updates where poll_id = :P returning 1) select t_eq((select count(*) from d), 0::bigint, 'visitor cannot delete update');
 select t_su();
 select t_eq((select price_paid_inr from purchase_updates where poll_id = :P), 2099, 'update unchanged after visitor attempts');
 
 -- ── Author can edit own poll ──
 select t_as(:A);
-with u as (update polls set question = 'Edited?' where id = :P returning 1) select t_eq((select count(*) from u), 1::bigint, 'author can edit own poll');
-select t_fails($$update polls set author_id = 'bbbbbbbb-0000-4000-8000-00000000000b' where id = '11111111-0000-4000-8000-000000000001'$$, 'row-level security', 'author cannot hand poll to someone else');
+select worthit_manage_post('poll',:P,'edit','{"itemName":"Sneakers","priceInr":2499,"question":"Edited?"}');
+select t_eq(get_poll_view(:P)->'poll'->>'question','Edited?','author can edit own poll');
+select t_fails($$update polls set author_id = 'bbbbbbbb-0000-4000-8000-00000000000b' where id = '11111111-0000-4000-8000-000000000001'$$, 'permission denied', 'author cannot hand poll to someone else');
 
 -- ── Anonymous (no session) ──
 select t_as(null);
@@ -134,8 +135,8 @@ select t_fails($$insert into storage.objects (bucket_id, name) values ('other', 
 select t_as(:C);
 select t_eq((select count(*) from storage.objects where bucket_id = 'poll-photos'), 0::bigint, 'other users cannot list photos');
 select t_su();
-select t_eq((select public from storage.buckets where id = 'poll-photos'), true, 'photo bucket is public-by-URL');
-select t_eq((select file_size_limit from storage.buckets where id = 'poll-photos'), 5242880::bigint, 'photo size limit set');
+select t_eq((select public from storage.buckets where id = 'poll-photos'), false, 'photo bucket requires authorized access');
+select t_eq((select file_size_limit from storage.buckets where id = 'poll-photos'), 15728640::bigint, 'full-size photo limit set');
 
 \o
 \echo ALL POLICY TESTS PASSED

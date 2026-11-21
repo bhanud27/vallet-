@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Verify you are human</title></head
+  ><style>
+    body {
+      margin: 12px;
+      font: 14px system-ui;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    :root {
+      --bg: #ffffff;
+      --ink: #1d1b2d;
+    }
+    :root[data-theme="dark"] {
+      --bg: #1c1923;
+      --ink: #f2eef7;
+    }
+  </style>
+  <body>
+    <p>Verify you are human to continue to Worth It.</p>
+    <div id="challenge"></div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const key = params.get("sitekey");
+      const mode = ["light", "dark"].includes(params.get("theme"))
+        ? params.get("theme")
+        : matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light";
+      document.documentElement.dataset.theme = mode;
+      document.documentElement.style.colorScheme = mode;
+      function invalidate() {
+        parent.postMessage(
+          { type: "worthit-captcha", token: "" },
+          location.origin,
+        );
+      }
+      function ready() {
+        if (!key) return;
+        turnstile.render("#challenge", {
+          sitekey: key,
+          theme: mode,
+          "expired-callback": invalidate,
+          "error-callback": invalidate,
+          callback: (token) => {
+            if (new URLSearchParams(location.search).get("native") === "1") {
+              const target = new URLSearchParams(location.search).get("return");
+              location.href =
+                "worthit://" +
+                (["login", "signup"].includes(target)
+                  ? target
+                  : "verify-human") +
+                "#token=" +
+                encodeURIComponent(token);
+              return;
+            }
+            if (window.ReactNativeWebView)
+              window.ReactNativeWebView.postMessage(
+                JSON.stringify({ type: "worthit-captcha", token }),
+              );
+            else
+              parent.postMessage(
+                { type: "worthit-captcha", token },
+                location.origin,
+              );
+          },
+        });
+      }
+    </script>
+    <script
+      src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=ready&render=explicit"
+      async
+      defer
+    ></script>
+  </body>
+</html>

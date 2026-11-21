@@ -1,0 +1,266 @@
+{
+  "products": [
+    {
+      "id": "00000000-0000-4000-8000-0000000000d4",
+      "image": "oversized-tee",
+      "name": "Cotton Lane oversized T-shirt",
+      "price": 699,
+      "category": "fashion",
+      "shape": "tee",
+      "color": "#30383c",
+      "background": "#f0e7dc",
+      "question": "Is this a good everyday cotton T-shirt for the price?",
+      "hoursAgo": 4
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000d5",
+      "image": "oxford-shirt",
+      "name": "Harbour Oxford shirt",
+      "price": 1299,
+      "category": "fashion",
+      "shape": "shirt",
+      "color": "#628793",
+      "background": "#e7eef1",
+      "question": "Would you choose this shirt for office and weekend wear?",
+      "hoursAgo": 7
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000d6",
+      "image": "cargo-pants",
+      "name": "Fieldwork utility cargo pants",
+      "price": 1799,
+      "category": "fashion",
+      "shape": "pants",
+      "color": "#6c7457",
+      "background": "#eaece1",
+      "question": "Are these cargo pants practical for daily wear?",
+      "hoursAgo": 10
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000d7",
+      "image": "everyday-hoodie",
+      "name": "Northline everyday hoodie",
+      "price": 1999,
+      "category": "fashion",
+      "shape": "hoodie",
+      "color": "#b87357",
+      "background": "#f2e5dd",
+      "question": "Worth this price for a comfortable layering hoodie?",
+      "hoursAgo": 13
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000d8",
+      "image": "straight-jeans",
+      "name": "Indigo Route straight jeans",
+      "price": 1499,
+      "category": "fashion",
+      "shape": "jeans",
+      "color": "#435c79",
+      "background": "#e5ebf2",
+      "question": "Would these straight-fit jeans work as an everyday pair?",
+      "hoursAgo": 16
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000d9",
+      "image": "city-backpack",
+      "name": "Metro Carry daypack",
+      "price": 1599,
+      "category": "other",
+      "shape": "backpack",
+      "color": "#ca9a4c",
+      "background": "#f4ecdb",
+      "question": "Good value for a daily college and commute backpack?",
+      "hoursAgo": 19
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000da",
+      "image": "wireless-earbuds",
+      "name": "Pocket Sound wireless earbuds",
+      "price": 1799,
+      "category": "audio",
+      "shape": "earbuds",
+      "color": "#f9faf8",
+      "background": "#e3ece8",
+      "question": "Would you buy these earbuds for commuting and casual listening?",
+      "hoursAgo": 22
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000db",
+      "image": "over-ear-headphones",
+      "name": "Quiet Arc over-ear headphones",
+      "price": 3499,
+      "category": "audio",
+      "shape": "headphones",
+      "color": "#34383f",
+      "background": "#e9e8ed",
+      "question": "Would you spend this much on everyday over-ear headphones?",
+      "hoursAgo": 25
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000dc",
+      "image": "fitness-watch",
+      "name": "Pulse Loop fitness watch",
+      "price": 2499,
+      "category": "electronics",
+      "shape": "watch",
+      "color": "#263a36",
+      "background": "#e0ece8",
+      "question": "Is a basic fitness watch worth it for daily activity tracking?",
+      "hoursAgo": 28
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000dd",
+      "image": "power-bank",
+      "name": "Charge Brick compact power bank",
+      "price": 1399,
+      "category": "electronics",
+      "shape": "powerbank",
+      "color": "#b9a5cf",
+      "background": "#eeE8f5",
+      "question": "Worth carrying a compact power bank on daily commutes?",
+      "hoursAgo": 31
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000de",
+      "image": "steel-bottle",
+      "name": "Sip Steel insulated bottle",
+      "price": 799,
+      "category": "home",
+      "shape": "bottle",
+      "color": "#4a8e83",
+      "background": "#e5eeeb",
+      "question": "Would you pay this price for a reusable insulated bottle?",
+      "hoursAgo": 34
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000df",
+      "image": "desk-lamp",
+      "name": "Glow Fold desk lamp",
+      "price": 1199,
+      "category": "home",
+      "shape": "lamp",
+      "color": "#dfad52",
+      "background": "#f5efdc",
+      "question": "Is this desk lamp a useful upgrade for a study desk?",
+      "hoursAgo": 37
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000e0",
+      "image": "wireless-keyboard",
+      "name": "Type Nest wireless keyboard",
+      "price": 2199,
+      "category": "electronics",
+      "shape": "keyboard",
+      "color": "#c8bdad",
+      "background": "#eeebe5",
+      "question": "Worth switching to this compact keyboard for desk work?",
+      "hoursAgo": 40
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000e1",
+      "image": "training-shorts",
+      "name": "Motion Club training shorts",
+      "price": 899,
+      "category": "fitness",
+      "shape": "shorts",
+      "color": "#38626f",
+      "background": "#e2edf0",
+      "question": "Good value for a comfortable gym and running pair?",
+      "hoursAgo": 43
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000e2",
+      "image": "yoga-mat",
+      "name": "Grounded Flow yoga mat",
+      "price": 999,
+      "category": "fitness",
+      "shape": "mat",
+      "color": "#a47c96",
+      "background": "#f1e7ee",
+      "question": "Would you choose this mat for stretching and home workouts?",
+      "hoursAgo": 46
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000e3",
+      "image": "sunglasses",
+      "name": "Daylight Round sunglasses",
+      "price": 999,
+      "category": "fashion",
+      "shape": "glasses",
+      "color": "#90634a",
+      "background": "#f2e9df",
+      "question": "Would these sunglasses be a useful everyday accessory?",
+      "hoursAgo": 49
+    },
+    {
+      "id": "00000000-0000-4000-8000-0000000000e4",
+      "image": "canvas-tote",
+      "name": "Everyday Canvas tote",
+      "price": 599,
+      "category": "other",
+      "shape": "tote",
+      "color": "#c5ad83",
+      "background": "#f3eddf",
+      "question": "Is a reusable canvas tote worth adding to your daily carry?",
+      "hoursAgo": 52
+    }
+  ],
+  "reels": [
+    {
+      "id": "demo-oversized-tee",
+      "video": "oversized-tee",
+      "pollId": "00000000-0000-4000-8000-0000000000d4",
+      "hoursAgo": 17,
+      "caption": "Cotton Lane oversized T-shirt - Rs 699. Is this a good everyday cotton T-shirt for the price?"
+    },
+    {
+      "id": "demo-cargo-pants",
+      "video": "cargo-pants",
+      "pollId": "00000000-0000-4000-8000-0000000000d6",
+      "hoursAgo": 23,
+      "caption": "Fieldwork utility cargo pants - Rs 1,799. Are these cargo pants practical for daily wear?"
+    },
+    {
+      "id": "demo-everyday-hoodie",
+      "video": "everyday-hoodie",
+      "pollId": "00000000-0000-4000-8000-0000000000d7",
+      "hoursAgo": 29,
+      "caption": "Northline everyday hoodie - Rs 1,999. Worth this price for a comfortable layering hoodie?"
+    },
+    {
+      "id": "demo-city-backpack",
+      "video": "city-backpack",
+      "pollId": "00000000-0000-4000-8000-0000000000d9",
+      "hoursAgo": 35,
+      "caption": "Metro Carry daypack - Rs 1,599. Good value for a daily college and commute backpack?"
+    },
+    {
+      "id": "demo-wireless-earbuds",
+      "video": "wireless-earbuds",
+      "pollId": "00000000-0000-4000-8000-0000000000da",
+      "hoursAgo": 41,
+      "caption": "Pocket Sound wireless earbuds - Rs 1,799. Would you buy these earbuds for commuting and casual listening?"
+    },
+    {
+      "id": "demo-over-ear-headphones",
+      "video": "over-ear-headphones",
+      "pollId": "00000000-0000-4000-8000-0000000000db",
+      "hoursAgo": 47,
+      "caption": "Quiet Arc over-ear headphones - Rs 3,499. Would you spend this much on everyday over-ear headphones?"
+    },
+    {
+      "id": "demo-fitness-watch",
+      "video": "fitness-watch",
+      "pollId": "00000000-0000-4000-8000-0000000000dc",
+      "hoursAgo": 53,
+      "caption": "Pulse Loop fitness watch - Rs 2,499. Is a basic fitness watch worth it for daily activity tracking?"
+    },
+    {
+      "id": "demo-desk-lamp",
+      "video": "desk-lamp",
+      "pollId": "00000000-0000-4000-8000-0000000000df",
+      "hoursAgo": 59,
+      "caption": "Glow Fold desk lamp - Rs 1,199. Is this desk lamp a useful upgrade for a study desk?"
+    }
+  ]
+}

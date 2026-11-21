@@ -1,33 +1,84 @@
-import { Choice } from '../lib/types';
+import { createContext, useContext } from "react";
+import type { Choice } from "../lib/types";
+import { colorPalettes, type ColorMode } from "../lib/colorTheme";
+export type { ColorMode, ThemeColors } from "../lib/colorTheme";
 
-export const colors = {
-  bg: '#F7F6F2',
-  surface: '#FFFFFF',
-  ink: '#19172A',
-  muted: '#605C6F',
-  border: '#E7E3EB',
-  accent: '#5C39C4',
-  accentSoft: '#F0EAFF',
-  tag: '#DEFA83',
-  buy: '#17704B',
-  wait: '#6441AD',
-  skip: '#5B586B',
-  danger: '#B3261E',
-  dangerBg: '#FCE8E6',
-  warnBg: '#FFF3CD',
-  warnInk: '#5C4300',
-  infoBg: '#F0EAFF',
-  infoInk: '#4B3286',
-  okBg: '#DDF3E7',
-  okInk: '#0E4B30',
+export type AppearanceStyle = "normal" | "glass";
+export function createTheme(
+  mode: ColorMode,
+  appearance: AppearanceStyle = "normal",
+  reducedEffects = false,
+) {
+  const glass = appearance === "glass" && !reducedEffects;
+  const base = colorPalettes[mode];
+  // Solid equivalents also theme inputs/rows that do not need a native blur view.
+  const colors =
+    appearance === "glass"
+      ? {
+          ...base,
+          bg: mode === "dark" ? "#000000" : "#FFFFFF",
+          surface: mode === "dark" ? "#121212" : "#FFFFFF",
+          border: mode === "dark" ? "#454545" : "#DCDCDC",
+          media: mode === "dark" ? "#1C1C1C" : "#F3F3F3",
+        }
+      : base;
+  return {
+    mode,
+    appearance,
+    reducedEffects,
+    glass,
+    pageBackground: glass ? "transparent" : colors.bg,
+    surfaceFill: glass
+      ? mode === "dark"
+        ? "rgba(18,18,18,0.82)"
+        : "rgba(255,255,255,0.88)"
+      : colors.surface,
+    colors,
+    choiceColor: {
+      buy: colors.buy,
+      wait: colors.wait,
+      skip: colors.skip,
+    } as Record<Choice, string>,
+    choiceBackground: {
+      buy: colors.buyBg,
+      wait: colors.waitBg,
+      skip: colors.skipBg,
+    } as Record<Choice, string>,
+    type: {
+      title: {
+        fontSize: 27,
+        lineHeight: 32,
+        fontWeight: "800" as const,
+        color: colors.ink,
+        letterSpacing: -0.65,
+      },
+      h2: {
+        fontSize: 18,
+        lineHeight: 24,
+        fontWeight: "800" as const,
+        color: colors.ink,
+        letterSpacing: -0.2,
+      },
+      body: { fontSize: 16, lineHeight: 22, color: colors.ink },
+      small: { fontSize: 13, lineHeight: 18, color: colors.muted },
+    },
+  };
+}
+export const themes = {
+  light: createTheme("light"),
+  dark: createTheme("dark"),
 };
-
-export const choiceColor: Record<Choice, string> = { buy: colors.buy, wait: colors.wait, skip: colors.skip };
-export const choiceBackground: Record<Choice, string> = { buy: '#EAF6EE', wait: '#F2EBFF', skip: '#F1EFF3' };
-
-export const type = {
-  title: { fontSize: 26, fontWeight: '800' as const, color: colors.ink, letterSpacing: -0.4 },
-  h2: { fontSize: 18, fontWeight: '800' as const, color: colors.ink },
-  body: { fontSize: 16, lineHeight: 22, color: colors.ink },
-  small: { fontSize: 13, lineHeight: 18, color: colors.muted },
-};
+export type AppTheme = ReturnType<typeof createTheme>;
+export const ThemeContext = createContext<AppTheme>(themes.light);
+export function useTheme() {
+  return useContext(ThemeContext);
+}
+/** Cache each component's styles by immutable theme, retaining state on appearance changes. */
+export function themedStyles<T>(factory: (theme: AppTheme) => T) {
+  const cache = new WeakMap<AppTheme, T>();
+  return function useThemedStyles(): T {
+    const theme = useTheme();
+    if (!cache.has(theme)) cache.set(theme, factory(theme));
+    return cache.get(theme)!;
+  };
+}

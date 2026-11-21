@@ -7,15 +7,21 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.119.0",
     "expo": "~58.0.26",
+    "expo-asset": "~58.0.21",
+    "expo-blur": "~58.0.6",
     "expo-clipboard": "~58.0.4",
     "expo-constants": "~58.0.16",
     "expo-crypto": "~58.0.8",
     "expo-file-system": "~58.0.14",
+    "expo-glass-effect": "~58.0.5",
+    "expo-image": "~58.0.18",
     "expo-image-manipulator": "~58.0.16",
     "expo-image-picker": "~58.0.10",
     "expo-linking": "~58.0.17",
     "expo-router": "~58.0.32",
+    "expo-secure-store": "~58.0.3",
     "expo-status-bar": "~58.0.5",
+    "expo-system-ui": "~58.0.7",
     "expo-video": "~58.0.14",
     "parse5": "^8.1.1",
     "react": "19.3.0",
@@ -24,11 +30,19 @@
     "react-native-safe-area-context": "~5.11.1",
     "react-native-screens": "~4.30.1",
     "react-native-url-polyfill": "^4.0.0",
-    "react-native-web": "~0.21.4"
+    "react-native-web": "~0.21.4",
+    "sharp": "^0.35.5",
+    "tus-js-client": "^4.3.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.17",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
     "@types/react": "~19.3.0",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~58.0.4",
+    "prettier": "^3.10.1",
+    "supabase": "3.2.0",
     "tsx": "^4.19.0",
     "typescript": "~6.0.3"
   },
@@ -37,10 +51,32 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "import:server": "node --env-file-if-exists=.env server/product-import.cjs",
+    "import:server": "node --env-file-if-exists=.env --env-file-if-exists=server/product-import.env server/product-import.cjs",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "export:web": "expo export -p web"
+    "export:web": "expo export -p web",
+    "lint": "expo lint",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "worker:media": "node --env-file-if-exists=server/.env server/media-worker.cjs",
+    "worker:deletion": "node --env-file-if-exists=server/.env server/deletion-worker.cjs",
+    "media:cleanup": "node --env-file-if-exists=server/.env server/media-cleanup.cjs",
+    "test:social-ui": "node tests/e2e/social-layout.cjs",
+    "demo:media": "node scripts/generate-demo-media.cjs",
+    "worker:post-cleanup": "node --env-file-if-exists=server/.env server/post-cleanup.cjs",
+    "db:status": "node scripts/database.cjs status",
+    "db:baseline": "node scripts/database.cjs baseline",
+    "db:plan": "node scripts/database.cjs plan",
+    "db:deploy": "node scripts/database.cjs deploy",
+    "db:new": "node scripts/database.cjs new",
+    "test:product-live": "node scripts/check-product-links.cjs"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "overrides": {
+    "@expo/fingerprint": {
+      "minimatch": "^11.0.1"
+    }
+  }
 }
