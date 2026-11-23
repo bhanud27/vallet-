@@ -12,7 +12,8 @@ import {
   type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { themedStyles } from "./theme";
+import { GlossyReflection } from "./ThemeSurface";
+import { themedStyles, useTheme } from "./theme";
 
 export function ConversationPanel({
   children,
@@ -26,6 +27,7 @@ export function ConversationPanel({
   label?: string;
 }) {
   const styles = useStyles();
+  const { glossy, reducedEffects } = useTheme();
 
   const { width } = useWindowDimensions();
   const side = width >= 900;
@@ -33,7 +35,9 @@ export function ConversationPanel({
     <Modal
       visible
       transparent
-      animationType={side ? "fade" : "slide"}
+      animationType={
+        glossy && reducedEffects ? "none" : side ? "fade" : "slide"
+      }
       onRequestClose={onClose}
     >
       <KeyboardAvoidingView
@@ -122,6 +126,7 @@ function PanelSurface({
         side && { paddingTop: insets.top },
       ]}
     >
+      <GlossyReflection strong />
       {!side && (
         <View
           {...pan.panHandlers}
@@ -145,19 +150,25 @@ function PanelSurface({
     </Animated.View>
   );
 }
-const useStyles = themedStyles(({ colors }) =>
+const useStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
-    overlay: { flex: 1, justifyContent: "flex-end", backgroundColor: "#0007" },
+    overlay: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: glossy?.scrim ?? "#0007",
+    },
     sideOverlay: {
       alignItems: "flex-end",
       justifyContent: "center",
-      backgroundColor: "#0003",
+      backgroundColor: glossy?.scrim ?? "#0003",
     },
     surface: {
       width: "100%",
       maxWidth: 560,
       alignSelf: "center",
-      backgroundColor: colors.surface,
+      backgroundColor: glossy?.elevated ?? colors.surface,
+      borderTopWidth: glossy ? 1 : 0,
+      borderColor: glossy?.emphasizedBorder ?? colors.border,
       borderTopLeftRadius: 22,
       borderTopRightRadius: 22,
       overflow: "hidden",

@@ -7,6 +7,9 @@ export type ProductDraft = {
   fields: ProductFields;
   mediaIds: string[];
   resolvedUrl?: string;
+  originalPrice?: string;
+  retailer?: string;
+  manualPreview?: boolean;
   manual?: string[];
   intelligence?: import("./productPreview").ProductIntelligence;
 };
@@ -19,5 +22,8 @@ export type CreationDraft = {
   location: string;
   editing: number;
   intentChosen?: boolean;
+  questions?: Partial<Record<CreationDraft["subtype"], string>>;
+  publishLocked?: boolean;
+  postMediaIds?: string[];
 };
 export type CreationMedia = DraftMedia;

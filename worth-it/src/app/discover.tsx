@@ -1,3 +1,4 @@
+import { GlossyReflection } from "../ui/ThemeSurface";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -88,6 +89,7 @@ export default function DiscoverScreen() {
       refreshing={!polls && !error}
     >
       <View style={styles.card}>
+        <GlossyReflection />
         <Field
           label="Spot a product or paste its store link"
           value={query}
@@ -159,6 +161,7 @@ export default function DiscoverScreen() {
               router.push({ pathname: "/p/[id]", params: { id: poll.id } })
             }
           >
+            <GlossyReflection />
             <PollThumbnail poll={poll} />
             <View style={styles.grow}>
               <Text style={type.h2}>
@@ -177,10 +180,11 @@ export default function DiscoverScreen() {
   );
 }
 
-const useStyles = themedStyles(({ colors }) =>
+const useStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
     card: {
-      backgroundColor: colors.surface,
+      backgroundColor: glossy?.cardFill ?? colors.surface,
+      overflow: glossy ? "hidden" : undefined,
       padding: 14,
       borderColor: colors.border,
       borderWidth: 1,
@@ -193,7 +197,8 @@ const useStyles = themedStyles(({ colors }) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 10,
-      backgroundColor: colors.surface,
+      backgroundColor: glossy?.cardFill ?? colors.surface,
+      overflow: glossy ? "hidden" : undefined,
       padding: 12,
       borderColor: colors.border,
       borderWidth: 1,

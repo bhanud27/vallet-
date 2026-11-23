@@ -16,6 +16,8 @@ import { FLOATING_NAV } from "../lib/floatingNavigation";
 export function FloatingHeader({
   title,
   leading,
+  center,
+  creation = false,
   trailing,
   testID = "floating-header",
   containerStyle,
@@ -23,6 +25,8 @@ export function FloatingHeader({
 }: {
   title?: string;
   leading?: React.ReactNode;
+  center?: React.ReactNode;
+  creation?: boolean;
   trailing?: React.ReactNode;
   testID?: string;
   containerStyle?: StyleProp<ViewStyle>;
@@ -36,7 +40,7 @@ export function FloatingHeader({
         {
           backgroundColor: "transparent",
           width: "100%",
-          paddingHorizontal: FLOATING_NAV.edge,
+          paddingHorizontal: creation ? 16 : FLOATING_NAV.edge,
           paddingVertical: FLOATING_NAV.gap,
           flexShrink: 0,
         },
@@ -46,11 +50,12 @@ export function FloatingHeader({
       <FloatingSurface
         radius={28}
         tone={tone}
+        creation={creation}
         testID={testID}
         containerStyle={{
           backgroundColor: "transparent",
           width: "100%",
-          maxWidth: FLOATING_NAV.maxWidth,
+          maxWidth: creation ? 480 : FLOATING_NAV.maxWidth,
           alignSelf: "center",
         }}
         style={{
@@ -62,7 +67,11 @@ export function FloatingHeader({
         }}
       >
         {leading}
-        {title ? (
+        {center ? (
+          <View pointerEvents="none" style={{ flex: 1, alignItems: "center" }}>
+            {center}
+          </View>
+        ) : title ? (
           <Text
             accessibilityRole="header"
             numberOfLines={1}

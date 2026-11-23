@@ -3,12 +3,13 @@ import { AppThemeProvider } from "../ui/AppThemeProvider";
 import { AppErrorBoundary } from "../ui/AppErrorBoundary";
 import { Stack, router, usePathname } from "expo-router";
 import React from "react";
-import { ActivityIndicator, Text } from "react-native";
+import { ActivityIndicator, Platform, Text } from "react-native";
 import { Banner, Button, Centered } from "../ui/kit";
 import { supabase } from "../lib/supabase";
 import { AppProvider, useAuth } from "../ui/AppContext";
 import { FloatingStackHeader } from "../ui/FloatingHeader";
 import { SettingsButton } from "../ui/SettingsButton";
+import { IncomingProductShare } from "../ui/IncomingProductShare";
 import { useTheme } from "../ui/theme";
 
 export default function RootLayout() {
@@ -99,9 +100,18 @@ function Navigation() {
               ...mainTransition,
             }}
           />
-          <Stack.Screen name="new" options={{ title: "New poll" }} />
-          <Stack.Screen name="add" options={{ title: "Create" }} />
-          <Stack.Screen name="new-post" options={{ title: "New post" }} />
+          <Stack.Screen
+            name="new"
+            options={{ title: "New poll", headerShown: false }}
+          />
+          <Stack.Screen
+            name="add"
+            options={{ title: "Create", headerShown: false }}
+          />
+          <Stack.Screen
+            name="new-post"
+            options={{ title: "New post", headerShown: false }}
+          />
           <Stack.Screen name="connections" options={{ title: "Connections" }} />
           <Stack.Screen name="archive" options={{ title: "Archive" }} />
           <Stack.Screen name="manage-post" options={{ title: "Manage post" }} />
@@ -164,6 +174,9 @@ function Navigation() {
           options={{ title: "Discover questions" }}
         />
       </Stack>
+      {Platform.OS === "android" ? (
+        <IncomingProductShare canCreate={!loading && !!session && !locked} />
+      ) : null}
     </>
   );
 }

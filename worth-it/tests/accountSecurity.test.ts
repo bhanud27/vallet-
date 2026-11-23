@@ -5,6 +5,7 @@ import {
   validateNewPassword,
   validEmail,
 } from "../src/lib/accountSecurity";
+import { verifyAccountCallback } from "../src/lib/authCallback";
 import { settingsGroups } from "../src/lib/settingsCatalog";
 function fixture() {
   const calls: string[] = [];
@@ -96,6 +97,50 @@ test("configured second factors must verify before sensitive provider updates", 
   );
   assert.deepEqual(f.calls.slice(-3), ["reauth", "mfa", "update"]);
 });
+test("recovery callbacks use the PKCE verifier and distinguish ordinary confirmation", async () => {
+  const calls: unknown[] = [];
+  const user = { id: "owner" };
+  const auth = {
+    exchangeCodeForSession: async (
+      code: string,
+      options?: { flowId: string },
+    ) => {
+      calls.push([code, options]);
+      return {
+        data: {
+          user,
+          session: { user },
+          redirectType: code === "reset" ? "recovery" : null,
+        },
+        error: null,
+      };
+    },
+  } as unknown as Parameters<typeof verifyAccountCallback>[0];
+  const callback = "worthit://auth-confirm";
+  assert.equal(
+    (
+      await verifyAccountCallback(
+        auth,
+        callback + "?code=reset&sb_flow_id=flow",
+      )
+    ).recovery,
+    true,
+  );
+  assert.equal(
+    (await verifyAccountCallback(auth, callback + "?code=signup&type=recovery"))
+      .recovery,
+    false,
+  );
+  await assert.rejects(
+    verifyAccountCallback(auth, callback + "#error_code=otp_expired"),
+    /expired/,
+  );
+  assert.deepEqual(calls, [
+    ["reset", { flowId: "flow" }],
+    ["signup", undefined],
+  ]);
+});
+
 test("settings sections have distinct real destinations and retain required activity/actions", () => {
   const keys = settingsGroups.flatMap((group) =>
     group.items.map((item) => item.key),

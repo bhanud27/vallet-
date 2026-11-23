@@ -264,7 +264,7 @@ export function ProductImageLink({ url }: { url?: string }) {
   );
 }
 
-const useStyles = themedStyles(({ colors }) =>
+const useStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
     center: {
       ...StyleSheet.absoluteFill,
@@ -283,7 +283,7 @@ const useStyles = themedStyles(({ colors }) =>
       backgroundColor: "#151515E8",
     },
     expandText: { color: "#fff", fontSize: 13, fontWeight: "800" },
-    viewer: { flex: 1, backgroundColor: "#000000" },
+    viewer: { flex: 1, backgroundColor: glossy ? colors.bg : "#000000" },
     viewerHeader: {
       minHeight: 66,
       paddingHorizontal: 12,
@@ -300,7 +300,7 @@ const useStyles = themedStyles(({ colors }) =>
       paddingHorizontal: 10,
       justifyContent: "center",
       borderRadius: 9,
-      backgroundColor: "#262626",
+      backgroundColor: glossy?.navigation ?? "#262626",
     },
     viewerEmpty: { flex: 1, alignItems: "center", justifyContent: "center" },
     disabled: { opacity: 0.5 },

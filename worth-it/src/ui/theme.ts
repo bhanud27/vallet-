@@ -1,19 +1,34 @@
 import { createContext, useContext } from "react";
 import type { Choice } from "../lib/types";
-import { colorPalettes, type ColorMode } from "../lib/colorTheme";
+import {
+  colorPalettes,
+  glossyColors,
+  glossyMaterials,
+  type ColorMode,
+} from "../lib/colorTheme";
 export type { ColorMode, ThemeColors } from "../lib/colorTheme";
 
-export type AppearanceStyle = "normal" | "glass";
+export const appearanceLabels = {
+  normal: "Normal",
+  glossy: "Glossy Dark",
+  glass: "Liquid Glass",
+} as const;
+export type AppearanceStyle = keyof typeof appearanceLabels;
+export const isAppearanceStyle = (value: unknown): value is AppearanceStyle =>
+  typeof value === "string" && Object.hasOwn(appearanceLabels, value);
 export function createTheme(
-  mode: ColorMode,
+  preferredMode: ColorMode,
   appearance: AppearanceStyle = "normal",
   reducedEffects = false,
 ) {
+  const glossy = appearance === "glossy" ? glossyMaterials : undefined;
+  const mode = glossy ? "dark" : preferredMode;
   const glass = appearance === "glass" && !reducedEffects;
   const base = colorPalettes[mode];
   // Solid equivalents also theme inputs/rows that do not need a native blur view.
-  const colors =
-    appearance === "glass"
+  const colors = glossy
+    ? glossyColors
+    : appearance === "glass"
       ? {
           ...base,
           bg: mode === "dark" ? "#000000" : "#FFFFFF",
@@ -27,6 +42,7 @@ export function createTheme(
     appearance,
     reducedEffects,
     glass,
+    glossy,
     pageBackground: glass ? "transparent" : colors.bg,
     surfaceFill: glass
       ? mode === "dark"
@@ -34,6 +50,30 @@ export function createTheme(
         : "rgba(255,255,255,0.88)"
       : colors.surface,
     colors,
+    creation: glossy
+      ? {
+          page: colors.bg,
+          card: colors.surface,
+          navigation: glossy.navigation,
+          secondary: colors.muted,
+          border: glossy.border,
+          divider: glossy.border,
+          media: glossy.secondary,
+          glassFill: glossy.cardFill,
+          glassBorder: glossy.border,
+        }
+      : {
+          page: mode === "dark" ? "#111310" : "#F7F8F4",
+          card: mode === "dark" ? "#1C1E1A" : "#FFFFFF",
+          navigation: mode === "dark" ? "#20221E" : "#FFFFFF",
+          secondary: mode === "dark" ? "#A5A8A0" : "#54594E",
+          border: mode === "dark" ? "#393D33" : "#D8DCCF",
+          divider: mode === "dark" ? "#30332C" : "#E4E7DE",
+          media: mode === "dark" ? "#282B25" : "#EDF0E8",
+          glassFill:
+            mode === "dark" ? "rgba(39,43,33,0.84)" : "rgba(255,255,255,0.86)",
+          glassBorder: mode === "dark" ? "#FFFFFF29" : "#A0A99266",
+        },
     choiceColor: {
       buy: colors.buy,
       wait: colors.wait,

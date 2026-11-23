@@ -10,7 +10,10 @@ import {
   removeDeviceVideo,
 } from "./socialVideo";
 
-export function pollDraftStore(owner: string, kind: "poll" | "post" = "poll") {
+export function pollDraftStore(
+  owner: string,
+  kind: "poll" | "post" | "shared-product" = "poll",
+) {
   const key = "worthit:" + kind + "-draft:v1:" + owner;
   const id = (media: { id: string }) =>
     "draft-" + kind + "-" + owner + "-" + media.id;

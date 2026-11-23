@@ -29,6 +29,6 @@ test("application source contains valid UTF-8 and no known double-encoded punctu
     new URL("../src/ui/ContentComposer.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(form, /Add your product/);
-  assert.match(form, /Tell us about your look/);
+  assert.match(form, /Is it really worth it/);
+  assert.match(form, /What makes this worth sharing/);
 });

@@ -1,3 +1,4 @@
+import { GlossyReflection } from "../../ui/ThemeSurface";
 import { CreationBody } from "../../ui/CreationBody";
 import { CreationVoting } from "../../ui/CreationVoting";
 import { ProductDetailsSummary } from "../../ui/ProductDetailsSummary";
@@ -231,6 +232,7 @@ export default function PollScreen() {
         />
       )}
       <View style={styles.post}>
+        <GlossyReflection />
         <View
           style={{
             flexDirection: "row",
@@ -497,11 +499,11 @@ export default function PollScreen() {
   );
 }
 
-const useStyles = themedStyles(({ colors }) =>
+const useStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
     post: {
-      backgroundColor: colors.surface,
-      borderRadius: 17,
+      backgroundColor: glossy?.cardFill ?? colors.surface,
+      borderRadius: glossy ? 22 : 17,
       borderWidth: 1,
       borderColor: colors.border,
       overflow: "hidden",

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { createTheme } from "../src/ui/theme";
+import { createTheme, isAppearanceStyle } from "../src/ui/theme";
 import { colorPalettes, isColorMode } from "../src/lib/colorTheme";
 function luminance(hex: string) {
   const values = hex
@@ -140,4 +140,31 @@ test("glass applies independently of color mode and respects reduced effects", (
       assert.ok((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) >= 4.5);
     }
   }
+});
+
+test("Glossy Dark keeps its independent palette, readable controls, and brand price tag", () => {
+  for (const requestedMode of ["light", "dark"] as const) {
+    const theme = createTheme(requestedMode, "glossy");
+    assert.equal(theme.mode, "dark");
+    assert.equal(theme.pageBackground, "#101011");
+    assert.equal(theme.colors.surface, "#242426");
+    assert.equal(theme.colors.ink, "#FAFAFA");
+    assert.equal(theme.colors.muted, "#A1A1AA");
+    assert.equal(theme.colors.tag, "#CEFF66");
+    assert.equal(theme.glass, false);
+    assert.notEqual(theme.colors.accent, theme.colors.tag);
+    for (const [ink, fill] of [
+      [theme.colors.ink, theme.colors.bg],
+      [theme.colors.muted, theme.colors.surface],
+      [theme.colors.muted, theme.glossy!.elevated],
+      [theme.colors.onAccent, theme.colors.accent],
+      [theme.colors.tagInk, theme.colors.tag],
+    ]) {
+      const [a, b] = [luminance(ink), luminance(fill)];
+      assert.ok((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) >= 4.5);
+    }
+  }
+  assert.ok(["normal", "glossy", "glass"].every(isAppearanceStyle));
+  assert.equal(isAppearanceStyle("dark"), false);
+  assert.equal(isAppearanceStyle("constructor"), false);
 });

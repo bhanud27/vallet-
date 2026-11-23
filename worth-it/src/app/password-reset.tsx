@@ -2,19 +2,25 @@ import React, { useState } from "react";
 import { router } from "expo-router";
 import { Text } from "react-native";
 import { supabase } from "../lib/supabase";
-import { accountSecurity, validateNewPassword } from "../lib/accountSecurity";
-import { confirmationUrl, recoveryAllowed, clearRecovery } from "../lib/auth";
+import { accountSecurity } from "../lib/accountSecurity";
+import {
+  passwordRecoveryUrl,
+  recoveryAllowed,
+  saveRecoveredPassword,
+} from "../lib/auth";
+import { useAuth } from "../ui/AppContext";
 import { Screen, Field, Button, Banner } from "../ui/kit";
 import { useTheme } from "../ui/theme";
 export default function PasswordReset() {
   const { type } = useTheme();
+  const { session } = useAuth();
   const [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
     [confirm, setConfirm] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [note, setNote] = useState("");
-  const recovery = recoveryAllowed();
+  const recovery = recoveryAllowed(session?.userId);
   return (
     <Screen>
       <Text style={type.title}>
@@ -51,18 +57,15 @@ export default function PasswordReset() {
               setBusy(true);
               setError("");
               try {
-                validateNewPassword(password, confirm);
-                const { error: failure } = await supabase!.auth.updateUser({
-                  password,
-                });
-                if (failure) throw failure;
-                clearRecovery();
+                await saveRecoveredPassword(password, confirm);
                 setPassword("");
                 setConfirm("");
                 router.replace("/profile");
-              } catch {
+              } catch (e) {
                 setError(
-                  "Could not update your password. Request a fresh reset link if it expired.",
+                  e instanceof Error
+                    ? e.message
+                    : "Could not update your password.",
                 );
               } finally {
                 setBusy(false);
@@ -87,11 +90,12 @@ export default function PasswordReset() {
               setBusy(true);
               setError("");
               try {
-                await accountSecurity(supabase!.auth, confirmationUrl()).reset(
-                  email,
-                );
+                await accountSecurity(
+                  supabase!.auth,
+                  passwordRecoveryUrl(),
+                ).reset(email);
                 setNote(
-                  "If this address has an account, a reset link has been sent. Open it on this device.",
+                  "If this address has an account, open the newest reset link on the device and app or browser where you requested it.",
                 );
               } catch (e) {
                 setError(

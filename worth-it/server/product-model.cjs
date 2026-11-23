@@ -1,3 +1,4 @@
+const { productUrlKey, sameProductUrl } = require("./product-identity.cjs");
 const { imageIdentity, imageResolution } = require("./retailer-images.cjs");
 const { extractAdapter, retailerImages } = require("./product-adapters.cjs");
 const list = (value) =>
@@ -77,20 +78,23 @@ function scopedProducts(value, target) {
       ...Object.values(node).filter((v) => v && typeof v === "object"),
     );
   }
-  const matches = (node) => {
+  const page = new URL(productUrlKey(target));
+  page.search = "";
+  const matches = (node, url) => {
     try {
-      const a = new URL(node.url || node["@id"], target),
-        b = new URL(target);
+      const candidate = node.url || node["@id"];
       return (
-        a.origin === b.origin &&
-        a.pathname === b.pathname &&
-        (!a.search || a.search === b.search)
+        !!candidate && sameProductUrl(new URL(candidate, target).href, url)
       );
     } catch {
       return false;
     }
   };
-  return nodes.find(matches) || nodes.find((n) => !n.url && !n["@id"]);
+  return (
+    nodes.find((node) => matches(node, target)) ||
+    nodes.find((node) => matches(node, page.href)) ||
+    nodes.find((node) => !node.url && !node["@id"])
+  );
 }
 async function extractIntelligence(html, url, legacy, validate) {
   const { parse } = await import("parse5");
@@ -175,6 +179,7 @@ async function extractIntelligence(html, url, legacy, validate) {
     ["embedded_data", embedded],
     ["microdata", micro],
   ];
+  const observedAt = new Date().toISOString();
   const provenance = {},
     conflicts = [];
   function choose(field, candidates) {
@@ -186,6 +191,7 @@ async function extractIntelligence(html, url, legacy, validate) {
     provenance[field] = {
       source: first?.[0] || null,
       state: first ? "extracted_unverified" : "missing",
+      observed_at: first ? observedAt : null,
     };
     const disagreements = valid
       .slice(1)
@@ -203,7 +209,7 @@ async function extractIntelligence(html, url, legacy, validate) {
   const offersOf = (p) => list(p?.offers);
   const selectedVariant = list(structuredProduct?.hasVariant).find((v) => {
     try {
-      return new URL(v.url, url).href === new URL(url).href;
+      return !!v.url && sameProductUrl(new URL(v.url, url).href, url);
     } catch {
       return false;
     }
@@ -219,6 +225,7 @@ async function extractIntelligence(html, url, legacy, validate) {
       embedded?.price,
   );
   const title = choose("title", [
+    ["structured_data", clean(selectedVariant?.name)],
     ...sources.map(([s, p]) => [
       s,
       clean(p?.name || p?.title || p?.productName, 80),
@@ -388,14 +395,21 @@ async function extractIntelligence(html, url, legacy, validate) {
         source,
       });
     }
-  const candidates = [
-    ...imageUrls(selectedVariant?.image || structuredProduct?.image),
-    ...retailerImages(embedded),
-    ...imageUrls(embedded?.images || embedded?.image),
-    ...legacy.images,
-    ...gallery,
-    ...variants.flatMap((v) => v.images),
-  ];
+  const variantImages = imageUrls(selectedVariant?.image);
+  const structuredImages = variantImages.length
+    ? variantImages
+    : selectedVariant
+      ? []
+      : imageUrls(structuredProduct?.image);
+  const candidates = variantImages.length
+    ? variantImages
+    : [
+        ...structuredImages,
+        ...retailerImages(embedded),
+        ...imageUrls(embedded?.images || embedded?.image),
+        ...legacy.images,
+        ...gallery,
+      ];
   const seen = new Set(),
     images = [];
   for (const raw of candidates) {
@@ -422,10 +436,9 @@ async function extractIntelligence(html, url, legacy, validate) {
       source_url: value,
       is_primary: images.length === 0,
       status: "unverified",
-      source:
-        candidates.indexOf(raw) < imageUrls(structuredProduct?.image).length
-          ? "structured_data"
-          : "delivered_page",
+      source: structuredImages.includes(raw)
+        ? "structured_data"
+        : "delivered_page",
     });
     if (images.length >= 48) break;
   }
@@ -537,6 +550,7 @@ async function extractIntelligence(html, url, legacy, validate) {
       provenance[key] = {
         source: missing ? null : "delivered_page",
         state: missing ? "missing" : "extracted_unverified",
+        observed_at: missing ? null : observedAt,
       };
     }
   const missing = ["title", "brand", "description", "category"].filter(
@@ -562,6 +576,7 @@ async function extractIntelligence(html, url, legacy, validate) {
       retailer: adapter.retailer,
       original_url: url,
       canonical_url: canonical || url,
+      site_name: clean(meta["og:site_name"], 80),
     },
     product,
     extraction: {
@@ -569,7 +584,7 @@ async function extractIntelligence(html, url, legacy, validate) {
       provenance,
       conflicts,
       missing_fields: missing,
-      extracted_at: new Date().toISOString(),
+      extracted_at: observedAt,
       // Coverage is completeness, not a probability that a value is correct.
       coverage: { present: 9 - missing.length, total: 9 },
       cache: "miss",
@@ -584,6 +599,14 @@ function failureCode(error) {
     [401, 403].includes(error.remoteStatus)
   )
     return "ACCESS_RESTRICTED";
+  if (error.code === "ECONNRESET") return "CONNECTION_RESET";
+  if (
+    ["ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "ECONNREFUSED"].includes(
+      error.code,
+    )
+  )
+    return "NETWORK_UNAVAILABLE";
+  if (error.code === "ETIMEDOUT") return "EXTRACTION_TIMEOUT";
   if (error.remoteStatus === 404 || error.remoteStatus === 410)
     return "PRODUCT_NOT_FOUND";
   if (error.code === "UNSUPPORTED_URL") return "UNSUPPORTED_URL";
@@ -594,9 +617,17 @@ function failureCode(error) {
     return "EXTRACTION_TIMEOUT";
   return error.code &&
     /^[A-Z_]+$/.test(error.code) &&
-    ["METADATA_NOT_FOUND", "ACCESS_RESTRICTED", "PROVIDER_ERROR"].includes(
-      error.code,
-    )
+    [
+      "METADATA_NOT_FOUND",
+      "ACCESS_RESTRICTED",
+      "PROVIDER_ERROR",
+      "POLICY_TIMEOUT",
+      "POLICY_UNAVAILABLE",
+      "CONNECTION_RESET",
+      "NETWORK_UNAVAILABLE",
+      "EXTRACTION_TIMEOUT",
+      "IMAGE_COPY_NOT_AUTHORIZED",
+    ].includes(error.code)
     ? error.code
     : "EXTRACTION_FAILED";
 }

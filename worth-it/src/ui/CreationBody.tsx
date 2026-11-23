@@ -12,6 +12,7 @@ import { ProductDetailsSummary } from "./ProductDetailsSummary";
 import { PollContext } from "./PollContext";
 import { PriceTag } from "./kit";
 import type { ProductDetails } from "../lib/productDetails";
+import { GlossyReflection } from "./ThemeSurface";
 import { ContentTap } from "./ContentTap";
 export function CreationBody({
   poll,
@@ -32,18 +33,42 @@ export function CreationBody({
   selected?: string | null;
   disabled?: boolean;
 }) {
-  const { type, colors } = useTheme();
+  const { type, colors, glossy } = useTheme();
   const spec = poll.creationSpec;
   if (!spec) return null;
   return (
     <View style={{ gap: 16 }}>
       {spec.subtype === "post" ? (
         <>
-          <PostPhoto
-            poll={poll}
-            preview={preview}
-            onOpen={preview ? undefined : () => router.push("/p/" + poll.id)}
-          />
+          {poll.imageUrl || poll.media?.length ? (
+            <PostPhoto
+              poll={poll}
+              preview={preview}
+              onOpen={preview ? undefined : () => router.push("/p/" + poll.id)}
+            />
+          ) : (
+            <ContentTap
+              kind="poll"
+              id={poll.id}
+              starDisabled={preview}
+              onOpen={preview ? undefined : () => router.push("/p/" + poll.id)}
+              accessibilityRole="link"
+              accessibilityLabel={"Open " + poll.itemName}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 10,
+                marginHorizontal: 16,
+                padding: 12,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: colors.border,
+              }}
+            >
+              <SocialIcon name="link" color={colors.accentInk} />
+              <Text style={[type.h2, { flex: 1 }]}>{poll.itemName}</Text>
+            </ContentTap>
+          )}
           <View style={{ paddingHorizontal: 16, gap: 6 }}>
             <PollContext poll={poll} />
             {spec.location ? (
@@ -78,13 +103,25 @@ export function CreationBody({
             {spec.products.map((product) => (
               <View
                 key={product.id}
-                style={{
-                  flexGrow: 1,
-                  flexBasis: spec.subtype === "compare" ? "45%" : "100%",
-                  minWidth: 0,
-                  gap: 7,
-                }}
+                style={[
+                  {
+                    flexGrow: 1,
+                    flexBasis: spec.subtype === "compare" ? "45%" : "100%",
+                    minWidth: 0,
+                    gap: 7,
+                  },
+                  glossy &&
+                    spec.subtype === "compare" && {
+                      backgroundColor: glossy.elevated,
+                      borderColor: glossy.border,
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      overflow: "hidden",
+                      padding: 8,
+                    },
+                ]}
               >
+                {spec.subtype === "compare" ? <GlossyReflection /> : null}
                 {spec.subtype === "compare" ? (
                   <ProductGallery
                     poll={poll}

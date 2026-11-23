@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+
 exports.verifyCreation = async ({
   page,
   base,
@@ -8,350 +9,482 @@ exports.verifyCreation = async ({
   width,
   expect,
 }) => {
-  const button = (name) => page.getByRole("button", { name, exact: true }),
-    field = (name) => page.getByRole("textbox", { name, exact: true });
-  const photo = path.join(project, "assets/demo/oversized-tee.png");
-  async function upload(label) {
-    const chooser = page.waitForEvent("filechooser");
-    await button(label).click();
-    await (await chooser).setFiles(photo);
-    await expect(button("Remove photo 1")).toBeVisible();
-  }
-  async function saved() {
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          Object.values(localStorage).some((v) => v.includes("creationDraft")),
-        ),
-      )
-      .toBe(true);
-  }
-  // Old draft is intentionally isolated from this fresh test flow.
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const field = (name) => page.getByRole("textbox", { name, exact: true });
+  const card = () => page.getByTestId("product-preview-card");
+  const link = field("Paste any product link");
+  const other = field("Paste another product link");
+  const photo = path.join(project, "tests/e2e/test-sneaker.jpg");
+  const alternate = path.join(project, "assets/demo/everyday-hoodie.png");
+  const pictures = {
+    primary: {
+      mimeType: "image/jpeg",
+      base64: fs.readFileSync(photo, "base64"),
+    },
+    second: {
+      mimeType: "image/png",
+      base64: fs.readFileSync(alternate, "base64"),
+    },
+  };
+  const origin = "https://www.myntra.com/shoes/fixture/";
+  const target = origin + "complete/buy?variant=blue";
+  const waits = new Map();
+  const calls = new Map();
+  const screens = process.env.CREATION_SCREENSHOT_DIR || shots;
+  fs.mkdirSync(screens, { recursive: true });
+  const release = async (key) => {
+    await expect.poll(() => waits.has(key)).toBe(true);
+    waits.get(key)();
+  };
+  const screenshot = async (name, anchor) => {
+    if (width !== 390 && !(width === 414 && name === "03-preview-dark-normal"))
+      return;
+    if (anchor) {
+      await anchor.scrollIntoViewIfNeeded();
+      await anchor.evaluate((el) => el.scrollIntoView({ block: "center" }));
+    }
+    await page.screenshot({
+      path: path.join(
+        screens,
+        (width === 414 ? "11-preview-414px-dark-normal" : name) + ".png",
+      ),
+      animations: "disabled",
+    });
+  };
   await page.evaluate(() => {
-    for (const key of Object.keys(localStorage))
+    for (const key of Object.keys(localStorage)) {
       if (
         key.startsWith("worthit:poll-draft:") ||
         key.startsWith("worthit:post-draft:")
       )
         localStorage.removeItem(key);
+    }
+    localStorage.setItem("worthit:appearance:v1", "normal");
+    localStorage.setItem("worthit:color-mode:v1", "dark");
   });
-  let requests = 0,
-    releaseOld,
-    releasePhotos;
-  const data = fs.readFileSync(photo).toString("base64");
   await page.route("**/api/product-preview", async (route) => {
-    requests++;
-    const payload = route.request().postDataJSON();
-    const url = payload.url;
-    if (!payload.detailsOnly && url.includes("progressive"))
-      await new Promise((resolve) => {
-        releasePhotos = resolve;
-      });
-    if (!payload.detailsOnly && !url.includes("blocked"))
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    if (url.includes("blocked"))
-      return route.fulfill({
-        status: 403,
-        contentType: "application/json",
-        body: JSON.stringify({
-          error:
-            "The store does not allow automatic previews. Add details manually.",
-        }),
-      });
-    if (url.includes("late"))
-      await new Promise((resolve) => {
-        releaseOld = resolve;
-      });
+    const { url, mode, detailsOnly } = route.request().postDataJSON();
+    const key = mode + "|" + url;
+    calls.set(key, (calls.get(key) || 0) + 1);
     const second = url.includes("ajio");
+    if (
+      (url === target && !detailsOnly) ||
+      (url.includes("late") && !detailsOnly) ||
+      (url === target && detailsOnly)
+    ) {
+      // Release once. Theme changes or a cached retry should never wait twice.
+      if (!waits.has(key))
+        await new Promise((resolve) => waits.set(key, resolve));
+    }
+    const fail =
+      url.includes("blocked") || (url.includes("image-only") && detailsOnly);
+    if (fail) {
+      await route
+        .fulfill({
+          status: 403,
+          json: {
+            error: "backend diagnostic",
+            code: url.includes("blocked-shared") ? "ACCESS_RESTRICTED" : undefined,
+          },
+        })
+        .catch(() => {});
+      return;
+    }
+    const titleOnly = url.includes("title-only");
+    const unpriced =
+      url.includes("unpriced") || titleOnly || url.includes("late");
+    const name = url.includes("image-only")
+      ? ""
+      : titleOnly
+        ? "Linen jacket"
+        : second
+          ? "Relaxed cotton hoodie"
+          : "Everyday court sneakers";
+    const original =
+      detailsOnly && !url.includes("no-original") && !unpriced
+        ? second
+          ? 2499
+          : 1799
+        : null;
+    const price = detailsOnly && !unpriced ? (second ? 1499 : 899) : null;
     await route
       .fulfill({
-        contentType: "application/json",
-        body: JSON.stringify({
-          schema_version: 2,
-          status: "partial",
-          code: "PARTIAL_EXTRACTION",
-          source: {
-            retailer: second ? "ajio" : "myntra",
-            original_url: url,
-            canonical_url: url,
-          },
-          product: {
-            title: second ? "Linen trousers" : "Cotton shirt",
-            brand: second ? "Brand B" : "Brand A",
-            price: {
-              current: second ? 1499 : 999,
-              original: 1999,
-              currency: "INR",
-              discount_percentage: second ? 25 : 50,
-              state: "extracted_unverified",
-            },
-            images: [
-              {
-                url: "https://cdn.example/front.jpg",
-                status: "validated",
-                width: 600,
-                height: 800,
-              },
-            ],
-            variants: [
-              {
-                id: "m",
-                attributes: { size: "M" },
-                price: 999,
-                availability: "in_stock",
-              },
-            ],
-            specifications: { Fabric: "Cotton" },
-            retailer_rating: { value: 4.3, best: 5, rating_count: 12 },
-            availability: "in_stock",
-          },
-          extraction: {
-            method: "structured_data",
-            cache: "miss",
-            extracted_at: new Date().toISOString(),
-            missing_fields: ["description"],
-            provenance: {},
-          },
-          name: second ? "Linen trousers" : "Cotton shirt",
+        json: {
+          name,
           brand: second ? "Brand B" : "Brand A",
-          category: second ? "Trousers" : "T-shirts",
-          description: "Public product metadata",
-          currency: "INR",
-          price: second ? 1499 : 999,
+          description: "Public product description",
+          price,
+          originalPrice: original,
+          currency: price ? "INR" : null,
           platform: second ? "ajio" : "myntra",
-          productUrl: url,
-          imagesPending: payload.detailsOnly === true,
-          images: payload.detailsOnly
-            ? []
-            : [{ mimeType: "image/png", base64: data }],
-        }),
+          productUrl: second ? url.replace("share?", "item?") : url,
+          images:
+            detailsOnly || titleOnly
+              ? []
+              : [second ? pictures.second : pictures.primary],
+        },
       })
       .catch(() => {});
   });
-  await page.goto(base + "/add");
-  await expect(button("Poll")).toBeVisible();
-  await expect(button("Post")).toBeVisible();
-  await expect(button("Compare")).toHaveCount(0);
-  await button("Poll").click();
-  await expect(field("Product link (optional)")).toBeVisible();
-  await expect(button("Compare")).toHaveCount(0);
-  await field("Product link (optional)").fill(
-    "https://www.myntra.com/shirts/progressive/buy",
-  );
-  await expect.poll(() => !!releasePhotos).toBe(true);
-  await expect(
-    page.getByText("Product details ready. Loading photos...", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByLabel("Store price ₹999", { exact: true }),
-  ).toBeVisible();
-  await expect(button("Remove photo 1")).toHaveCount(0);
-  releasePhotos();
-  await expect(button("Remove photo 1")).toBeVisible();
-  await button("Clear product link").click();
-  await field("Product link (optional)").fill(
-    "https://www.myntra.com/shirts/late/buy",
-  );
-  await expect.poll(() => !!releaseOld).toBe(true);
-  await field("Product name").fill("My edited shirt");
-  await field("Product link (optional)").fill(
-    "https://www.myntra.com/shirts/first/buy",
-  );
-  releaseOld();
-  await expect(button("Remove photo 1")).toBeVisible();
-  await expect(field("Product name")).toHaveValue("My edited shirt");
-  const clear = button("Clear product link");
-  const inputBounds = await field("Product link (optional)").boundingBox();
-  const clearBounds = await clear.boundingBox();
-  expect(clearBounds.x).toBeGreaterThan(inputBounds.x);
-  expect(clearBounds.x + clearBounds.width).toBeLessThanOrEqual(
-    inputBounds.x + inputBounds.width,
-  );
-  await clear.click();
-  await expect(field("Product link (optional)")).toHaveValue("");
-  await expect(clear).toHaveCount(0);
-  await expect(button("Remove photo 1")).toHaveCount(0);
-  await field("Product link (optional)").fill(
-    "https://www.myntra.com/shirts/replacement/buy",
-  );
-  await expect(button("Remove photo 1")).toBeVisible();
-  await expect(field("Product name")).toHaveValue("My edited shirt");
 
-  await button("View store facts").click();
-  await expect(page.getByText("Fabric: Cotton", { exact: true })).toBeVisible();
+  await page.goto(base + "/add");
   await expect(
-    page.getByText("Store rating 4.3/5 · 12 ratings", { exact: true }),
+    page.getByRole("heading", { name: "Is it really worth it?" }),
   ).toBeVisible();
-  await button("Hide store facts").click();
-  await button("Edit product details").click();
-  await expect(field("Brand")).toHaveValue("Brand A");
-  await field("Brand").fill("My brand");
-  await button("Continue").click();
-  await expect(button("Compare")).toBeVisible();
-  await expect(button("Poll — Worth It?")).toBeVisible();
-  await button("Compare").click();
   await expect(
-    page.getByText("Already selected", { exact: true }),
+    page.getByText("Find it. Share it. Decide together."),
   ).toBeVisible();
-  await field("Product link (optional)").fill(
-    "https://www.ajio.com/trousers/second",
+  await expect(button("Poll")).toHaveCount(0);
+  await expect(card()).toHaveCount(0);
+  for (const label of ["Home", "Explore", "Create", "Activity", "Profile"])
+    await expect(button(label)).toBeVisible();
+  const { x, width: logoWidth } = await page
+    .getByTestId("brand-logo")
+    .boundingBox();
+  expect(Math.abs(x + logoWidth / 2 - width / 2)).toBeLessThan(2);
+  await screenshot("01-empty-dark-normal");
+
+  await link.fill("javascript:invalid");
+  await link.press("Enter");
+  await expect(
+    page.getByText("Enter a valid public product link."),
+  ).toBeVisible();
+  expect(calls.size).toBe(0);
+
+  await page
+    .context()
+    .grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+  await page.evaluate((value) => navigator.clipboard.writeText(value), target);
+  await button("Paste link from clipboard").click();
+  await expect(link).toHaveValue(target);
+  await expect(page.getByTestId("product-preview-skeleton")).toBeVisible();
+  await screenshot("02-loading-dark-normal");
+  await button("Preview")
+    .click({ force: true, timeout: 1000 })
+    .catch(() => {});
+  await release("rich|" + target);
+  await expect(card().getByText("Everyday court sneakers")).toBeVisible();
+  await expect(card().getByRole("img")).toBeVisible();
+  await expect(button("Poll")).toBeVisible();
+  await expect(card().getByText(/off$/)).toHaveCount(0);
+
+  await button("Edit product").click();
+  await field("Brand").fill("My verified brand");
+  await button("Save").click();
+  await release("enrichment|" + target);
+  await expect(card().getByText("50% off")).toBeVisible();
+  await expect(
+    card().getByRole("link", { name: "View product" }),
+  ).toBeVisible();
+  expect(calls.get("rich|" + target)).toBe(1);
+  await screenshot("03-preview-dark-normal");
+  const actions = await Promise.all(
+    ["Poll", "Compare", "Post"].map((label) => button(label).boundingBox()),
   );
-  await expect(field("Product name")).toHaveValue("Linen trousers");
-  await expect(button("Remove photo 1")).toBeVisible();
-  await button("Continue").click();
-  await expect(field("Comparison question")).toHaveValue(
-    "Which one should I buy?",
-  );
-  await expect(field("Option 1")).toHaveCount(0);
-  await button("Preview").click();
-  await expect(button("Publish Comparison")).toBeVisible();
-  await expect(
-    page.getByText("My edited shirt", { exact: true }).first(),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Linen trousers", { exact: true }).first(),
-  ).toBeVisible();
-  await expect(button("Worth it")).toHaveCount(0);
-  await expect(page.getByText("My brand", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText("Store rating 4.3/5", { exact: true }),
-  ).toHaveCount(2);
+  expect(
+    Math.max(...actions.map((a) => a.width)) -
+      Math.min(...actions.map((a) => a.width)),
+  ).toBeLessThan(1);
+  expect(new Set(actions.map((a) => a.height)).size).toBe(1);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(width + 1);
-  await page.screenshot({
-    path: path.join(shots, width + "-comparison-preview.png"),
-  });
-  await button("Back to editing").click();
-  await expect(field("Comparison question")).toHaveValue(
-    "Which one should I buy?",
-  );
-  await button("Preview").click();
-  await button("Publish Comparison").evaluate((el) => {
-    el.click();
-    el.click();
-  });
-  await expect(page).toHaveURL(/\/p\//);
-  const comparison = page.url();
-  const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("worthit:local:v1")).polls.filter(
-      (p) => p.creationSpec?.subtype === "compare",
-    ),
-  );
-  expect(stored).toHaveLength(1);
-  expect(stored[0].creationSpec.products[0].url).toContain("myntra");
-  expect(stored[0].creationSpec.products[1].url).toContain("ajio");
-  expect(stored[0].creationSpec.products[0].details.brand).toBe("My brand");
-  await page.goto(base + "/settings/demo");
-  await button("Act as a new guest").click();
-  await page.goto(comparison);
-  await button("Linen trousers").click();
-  await button("Submit vote").click();
-  await expect(page.getByText(/100%.*Leading/)).toBeVisible();
-  await expect(button("Submit vote")).toHaveCount(0);
-  await page.goto(base + "/settings/demo");
-  await button("Back to my identity").click();
-  await page.goto(base + "/new");
-  await upload("Upload product photo");
-  await field("Product name").fill("Canvas jacket");
-  await button("Continue").click();
-  await button("Poll — Worth It?").click();
+
+  // A draft can be retained when backing out of an attempted navigation.
+  await button("Close creation").click();
+  await expect(page.getByText("Discard this draft?")).toBeVisible();
+  await button("Keep editing").click();
+  await expect(card()).toBeVisible();
+  // Verify the original product link survives source normalization.
+  await page
+    .context()
+    .route(target, (route) => route.fulfill({ body: "Original source" }));
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    card().getByRole("link", { name: "View product" }).click(),
+  ]);
+  expect(popup.url()).toBe(target);
+  await popup.close();
+
+  await button("Poll").click();
   await expect(field("Poll question")).toHaveValue("Is this worth buying?");
-  await expect(field("Option 1")).toHaveValue("Worth it");
+  await field("Poll question").fill("Should I get these sneakers?");
   await button("Add option").click();
-  await expect(button("Add option")).toBeDisabled();
   await field("Option 4").fill("Worth IT");
-  await button("Preview").click();
+  await button("Publish poll").click();
   await expect(
     page.getByText(/distinct, nonempty voting options/),
   ).toBeVisible();
-  await field("Option 4").fill("Ask me later");
   await button("Remove option 4").click();
-  await button("Preview").click();
-  await expect(page.getByText("₹0", { exact: true })).toHaveCount(0);
-  await button("Publish Poll").click();
-  await expect(page).toHaveURL(/\/p\//);
-  await page.goto(base + "/add");
-  await button("Post").click();
-  await expect(field("Caption")).toHaveCount(0);
-  await expect(field("Product link (optional)")).toBeVisible();
-  await button("Continue").click();
-  await expect(
-    page.getByText("Add photos or a video first.", { exact: true }),
-  ).toBeVisible();
-  await field("Product link (optional)").fill(
-    "https://www.meesho.com/fixture/p/post",
+  await screenshot("04-poll-dark-normal", button("Publish poll"));
+
+  await button("Compare").click();
+  await expect(field("Comparison question")).toHaveValue(
+    "Which one is more worth buying?",
   );
-  await expect(button("Remove photo 1")).toBeVisible();
-  await expect(field("Product name")).toHaveValue("Cotton shirt");
-  await button("Edit product details").click();
-  await field("Brand").fill("My post brand");
-  await field("Store price").fill("invalid");
-  await button("Continue").click();
+  const secondUrl = "https://www.ajio.com/share?sku=white";
+  await other.fill(secondUrl);
+  await expect(page.getByTestId("comparison-product-card")).toHaveCount(2);
+  await expect(
+    page.getByText("Relaxed cotton hoodie", { exact: true }),
+  ).toBeVisible();
+  await expect(card().getByText("Everyday court sneakers")).toBeVisible();
+  await field("Comparison question").fill("Which is better for travel?");
+  await screenshot(
+    "05-compare-dark-normal",
+    page.getByTestId("comparison-product-card").first(),
+  );
+  await button("Post").click();
+  await field("Caption").fill("A comfortable everyday staple");
+  const chooser = page.waitForEvent("filechooser");
+  await button("Add photos or video").click();
+  await (await chooser).setFiles(alternate);
+  await expect(button("Remove attachment 2")).toBeVisible();
+  await screenshot("06-post-dark-normal", field("Caption"));
+
+  await button("Poll").click();
+  await expect(field("Poll question")).toHaveValue(
+    "Should I get these sneakers?",
+  );
+  await button("Compare").click();
+  await expect(other).toHaveValue(secondUrl);
+  const originalSecond = page.getByRole("link", {
+    name: "View product Relaxed cotton hoodie",
+  });
+  expect(await originalSecond.count()).toBe(1);
+  await expect(field("Comparison question")).toHaveValue(
+    "Which is better for travel?",
+  );
+  expect(calls.get("rich|" + secondUrl)).toBe(1);
+  await button("Publish comparison").evaluate((el) => {
+    el.click();
+    el.click();
+  });
+  await expect(page).toHaveURL(/\/p\//);
+  const published = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("worthit:local:v1")).polls.filter(
+      (p) => p.question === "Which is better for travel?",
+    ),
+  );
+  expect(published).toHaveLength(1);
+  expect(published[0].media).toHaveLength(2);
+  expect(published[0].creationSpec.products.map((p) => p.url)).toEqual([
+    target,
+    secondUrl,
+  ]);
+  expect(published[0].creationSpec.products[0].details.brand).toBe(
+    "My verified brand",
+  );
+
+  await page.goto(base + "/add");
+  const late = origin + "late/buy";
+  await link.fill(late);
+  await expect.poll(() => waits.has("rich|" + late)).toBe(true);
+  await link.fill(origin + "image-only/buy");
+  await release("rich|" + late);
+  await expect(
+    card().getByRole("button", { name: "Add product title" }),
+  ).toBeVisible();
+  await expect(card().getByText("Everyday court sneakers")).toHaveCount(0);
+  await button("Add product title").click();
+  await field("Product title").fill("My new sneakers");
+  await button("Save").click();
+  await expect(card().getByText("My new sneakers")).toBeVisible();
+  await expect(page.getByText("backend diagnostic")).toHaveCount(0);
+  await button("Close creation").click();
+  await button("Discard").click();
+  await expect(page).toHaveURL(base + "/");
+  await button("Add").click();
+  await expect(link).toBeVisible();
+
+  await link.fill("https://shop.example/blocked");
+  await expect(
+    page.getByText("We couldn’t load a preview for this link."),
+  ).toBeVisible();
+  await button("Try again").click();
+  await expect
+    .poll(() => calls.get("rich|https://shop.example/blocked"))
+    .toBe(2);
+  await button("Add manually").click();
+  await field("Product title").fill("Handmade canvas tote");
+  await button("Save").click();
+  await expect(card().getByText("Handmade canvas tote")).toBeVisible();
+  await expect(link).toHaveValue("https://shop.example/blocked");
+  await button("Close creation").click();
+  await button("Discard").click();
+  await expect(page).toHaveURL(base + "/");
+
+  await button("Add").click();
+  await expect(page).toHaveURL(/\/add$/);
+  await button("Back").click();
+  await expect(page).toHaveURL(base + "/");
+  await button("Add").click();
+  const photoPicker = page.waitForEvent("filechooser");
+  await button("Upload photo").click();
+  await (await photoPicker).setFiles(photo);
+  await expect(card().getByRole("img")).toBeVisible();
+  await button("Edit product").click();
+  await field("Product title").fill("Canvas sneakers");
+  await field("Current price").fill("oops");
+  await button("Save").click();
   await expect(page.getByText(/valid store price/)).toBeVisible();
-  await field("Store price").fill("999");
-  await button("Continue").click();
-  await field("Caption").fill("A fresh weekend look #style");
-  await button("More Options").click();
-  await field("Location (optional)").fill("Bengaluru");
-  await button("Preview").click();
-  await expect(button("Publish Post")).toBeVisible();
+  await field("Current price").fill("");
+  await button("Save").click();
+  await button("Poll").click();
+  await button("Publish poll").click();
+  await expect(page).toHaveURL(/\/p\//);
+  await expect(
+    page.getByText("Canvas sneakers", { exact: true }).first(),
+  ).toBeVisible();
+
+  await page.goto(base + "/new-post");
+  await link.fill(origin + "title-only/buy");
+  await expect(card().getByText("Linen jacket")).toBeVisible();
+  await expect(button("Add photo")).toBeVisible();
+  await expect(card().getByText(/off$/)).toHaveCount(0);
+  await screenshot("07-partial-dark-normal");
+  await field("Caption").fill("Light enough for the afternoon.");
+  if (width === 390) {
+    await page.evaluate(() => {
+      const save = Storage.prototype.setItem;
+      window.restorePublishing = () => {
+        Storage.prototype.setItem = save;
+      };
+      Storage.prototype.setItem = function (key, value) {
+        if (
+          key === "worthit:local:v1" &&
+          value.includes("Light enough for the afternoon.")
+        )
+          throw new Error("Test storage failure");
+        return save.call(this, key, value);
+      };
+    });
+    await button("Publish post").click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Could not save" }),
+    ).toBeVisible();
+    await expect(field("Caption")).toHaveValue(
+      "Light enough for the afternoon.",
+    );
+    await page.evaluate(() => window.restorePublishing());
+  }
+  await button("Publish post").click();
+  await expect(page).toHaveURL(/\/p\//);
+  const post = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("worthit:local:v1")).polls.find(
+      (p) => p.question === "Light enough for the afternoon.",
+    ),
+  );
+  expect(post.contentKind).toBe("post");
+  expect(post.productUrl).toContain("title-only");
+  expect(post.media).toBeUndefined();
+  await expect(page.getByText("Linen jacket", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "View product", exact: true }),
+  ).toBeVisible();
+
+  await page.goto(
+    base + "/add?productUrl=" + encodeURIComponent(origin + "no-original/buy"),
+  );
+  await expect(card().getByText("Everyday court sneakers")).toBeVisible();
+  await expect(card().getByText(/899/)).toBeVisible();
+  await expect(card().getByText(/off$/)).toHaveCount(0);
+  await link.fill(target);
+  await expect(card().getByText("50% off")).toBeVisible();
+  await button("Post").click();
+  await field("Caption").fill("Kept through theme changes");
+  await button("Profile").click();
+  await expect(page).toHaveURL(/\/profile$/);
   await expect
     .poll(() =>
       page.evaluate(() =>
-        Object.values(localStorage).some(
-          (v) =>
-            v.includes("A fresh weekend look #style") &&
-            v.includes('"step":"preview"'),
+        Object.values(localStorage).some((record) =>
+          record.includes("Kept through theme changes"),
         ),
       ),
     )
     .toBe(true);
-  await page.goto(base + "/settings/appearance");
-  await page.getByRole("radio", { name: "Liquid Glass", exact: true }).click();
-  await expect(
-    page.getByRole("radio", { name: "Liquid Glass", exact: true }),
-  ).toBeChecked();
-  await page.getByRole("radio", { name: "Dark", exact: true }).click();
-  await page.goto(base + "/new-post");
-  await expect(button("Publish Post")).toBeVisible();
-  await expect(
-    page.getByText("A fresh weekend look #style", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText("Bengaluru", { exact: true })).toBeVisible();
-  await expect(
-    page.locator('[data-testid="creation-surface-glass"]').first(),
-  ).toBeVisible();
-  await page.screenshot({
-    path: path.join(shots, width + "-glass-post-preview.png"),
-  });
-  await button("Publish from header").click();
-  await expect(page).toHaveURL(/\/p\//);
-  await expect(button("Star post")).toBeVisible();
-  const attachedPost = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("worthit:local:v1")).polls.find(
-      (p) =>
-        p.contentKind === "post" &&
-        p.question === "A fresh weekend look #style",
-    ),
+  for (const [appearance, mode, name] of [
+    ["Normal", "Light", "08-preview-light-normal"],
+    ["Liquid Glass", "Light", "09-preview-light-glass"],
+    ["Liquid Glass", "Dark", "10-preview-dark-glass"],
+  ]) {
+    await page.goto(base + "/settings/appearance");
+    await page.getByRole("radio", { name: appearance, exact: true }).click();
+    await page.getByRole("radio", { name: mode, exact: true }).click();
+    await page.goto(base + "/add");
+    await expect(card().getByText("Everyday court sneakers")).toBeVisible();
+    await expect(field("Caption")).toHaveValue("Kept through theme changes");
+    expect(
+      await page.evaluate(() => document.documentElement.style.colorScheme),
+    ).toBe(mode.toLowerCase());
+    await screenshot(name);
+  }
+  await button("Close creation").click();
+  await button("Discard").click();
+  await expect(page).toHaveURL(base + "/");
+
+  // Expo Router's share handoff can be tested in the browser independently of Android delivery.
+  const ordinaryUrl = origin + "ordinary-draft/buy";
+  await page.goto(base + "/add?productUrl=" + encodeURIComponent(ordinaryUrl));
+  await expect(link).toHaveValue(ordinaryUrl);
+  await expect(card()).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (url) =>
+          Object.keys(localStorage).some(
+            (key) =>
+              key.startsWith("worthit:poll-draft:") &&
+              localStorage.getItem(key)?.includes(url),
+          ),
+        ordinaryUrl,
+      ),
+    )
+    .toBe(true);
+
+  const blockedShare = "https://shop.example/blocked-shared";
+  await page.goto(
+    base + "/add?sharedProductUrl=" + encodeURIComponent(blockedShare),
   );
-  expect(attachedPost.productUrl).toContain("meesho");
-  expect(attachedPost.productDetails.brand).toBe("My post brand");
-  await expect(button("Save for later")).toBeVisible();
+  await expect(link).toHaveValue(blockedShare);
   await expect(
-    page.getByText("Votes from the community", { exact: true }),
-  ).toHaveCount(0);
-  await page.goto(base + "/settings/appearance");
-  await page.getByRole("radio", { name: "Normal", exact: true }).click();
-  await page.getByRole("radio", { name: "Light", exact: true }).click();
-  // Retailer restrictions retain manual entry and do not manufacture extracted products.
-  await page.goto(base + "/new");
-  await field("Product link (optional)").fill("https://www.ajio.com/blocked");
-  await expect(
-    page.getByText(/store does not allow automatic previews/),
+    page.getByText("The store blocked automatic access for this link."),
   ).toBeVisible();
-  await field("Product name").fill("Manual fashion find");
-  await button("Continue").click();
-  await expect(button("Compare")).toBeVisible();
-  expect(requests).toBeGreaterThanOrEqual(3);
+  await expect(button("Add manually")).toBeVisible();
+  await expect(button("Upload photo")).toBeVisible();
+
+  const sharedUrl = "https://www.ajio.com/p/shared?variant=navy";
+  const sharedPath =
+    base + "/add?sharedProductUrl=" + encodeURIComponent(sharedUrl);
+  await page.goto(sharedPath);
+  await expect(link).toHaveValue(sharedUrl);
+  await expect(card().getByText("Relaxed cotton hoodie")).toBeVisible();
+  for (const action of ["Poll", "Compare", "Post"])
+    await expect(button(action)).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (url) =>
+          Object.keys(localStorage).some(
+            (key) =>
+              key.startsWith("worthit:shared-product-draft:") &&
+              JSON.parse(localStorage.getItem(key)).creationDraft?.products[0]
+                ?.resolvedUrl === url,
+          ),
+        sharedUrl,
+      ),
+    )
+    .toBe(true);
+  await page.reload();
+  await expect(card().getByText("Relaxed cotton hoodie")).toBeVisible();
+  expect(calls.get("rich|" + sharedUrl)).toBe(1);
+
+  await page.goto(base + "/add");
+  await expect(link).toHaveValue(ordinaryUrl);
+
+  console.log(
+    width +
+      "px creation: preview, races, partial data, manual media, themes and all publish actions passed.",
+  );
 };

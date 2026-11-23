@@ -48,7 +48,7 @@ export default function ReelsScreen() {
 }
 
 function ReelsWorkspace() {
-  const { colors } = useTheme();
+  const { colors, glossy } = useTheme();
   const {
       session: { userId },
     } = useApp(),
@@ -239,6 +239,7 @@ function ReelsWorkspace() {
     <View
       style={[
         styles.page,
+        glossy && { backgroundColor: colors.bg },
         {
           paddingTop: insets.top,
           paddingLeft: insets.left,
@@ -250,6 +251,7 @@ function ReelsWorkspace() {
       <View
         style={[
           styles.stage,
+          glossy && { backgroundColor: colors.bg },
           !!panel &&
             width >= 900 && {
               alignSelf: "flex-start",

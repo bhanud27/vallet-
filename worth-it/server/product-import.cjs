@@ -1,3 +1,8 @@
+const {
+  productUrlKey,
+  retailerProductKey,
+  sameProductUrl,
+} = require("./product-identity.cjs");
 const { extractIntelligence, failureCode } = require("./product-model.cjs");
 const {
   createFallbacks,
@@ -158,18 +163,25 @@ async function fetchPublic(input, signal, includePage, options = {}) {
   let url = publicUrl(retailerPageUrl(publicUrl(input).href));
   const initial = url.href;
   for (let redirects = 0; redirects <= 4; redirects++) {
-    if (!options.text && options.beforeRequest)
-      await options.beforeRequest(url.href, signal);
-    const res = await requestPublic(
-      url,
-      signal,
-      options.text
-        ? "text/plain"
-        : includePage
-          ? "text/html, application/xhtml+xml, image/*;q=0.8"
-          : "image/jpeg, image/png, image/webp",
-      options,
-    );
+    let res;
+    try {
+      if (!options.text && options.beforeRequest)
+        await options.beforeRequest(url.href, signal);
+      res = await requestPublic(
+        url,
+        signal,
+        options.text
+          ? "text/plain"
+          : includePage
+            ? "text/html, application/xhtml+xml, image/*;q=0.8"
+            : "image/jpeg, image/png, image/webp",
+        options,
+      );
+    } catch (error) {
+      error.stage ??= includePage ? "page" : "image";
+      error.productUrl = url.href;
+      throw error;
+    }
     if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
       res.destroy();
       const target = publicUrl(
@@ -215,6 +227,12 @@ async function fetchPublic(input, signal, includePage, options = {}) {
           : "The store did not provide a preview for this link.",
       );
       if (res.statusCode === 200) error.code = "UNSUPPORTED_URL";
+      error.stage = options.text ? "policy" : includePage ? "page" : "image";
+      if (includePage && [401, 403].includes(res.statusCode))
+        error.reason = "PAGE_HTTP_DENIED";
+      if (includePage && res.statusCode === 429)
+        error.reason = "PAGE_RATE_LIMITED";
+      error.productUrl = url.href;
       error.remoteStatus = res.statusCode;
       error.retryAfter = res.headers["retry-after"];
       throw error;
@@ -235,6 +253,10 @@ async function fetchPublic(input, signal, includePage, options = {}) {
         throw new PreviewError("The store image was unavailable.");
       }
       return { url, type: actualType, body };
+    } catch (error) {
+      error.stage ??= options.text ? "policy" : includePage ? "page" : "image";
+      error.productUrl = url.href;
+      throw error;
     } finally {
       res.destroy();
     }
@@ -270,6 +292,7 @@ function findProduct(value, base) {
       pending.push(children[index]);
   }
   return (
+    candidates.find((node) => isPageProduct(node, base, true)) ??
     candidates.find((node) => isPageProduct(node, base)) ??
     candidates.find(
       (node) => !node.url && !node["@id"] && !node.mainEntityOfPage,
@@ -277,17 +300,17 @@ function findProduct(value, base) {
   );
 }
 
-function isPageProduct(node, base) {
+function isPageProduct(node, base, exact = false) {
   try {
     const url = new URL(
       node.url || node["@id"] || node.mainEntityOfPage?.["@id"],
       base,
     );
-    const page = new URL(base);
-    return (
-      url.origin === page.origin &&
-      url.pathname.replace(/\/$/, "") === page.pathname.replace(/\/$/, "")
-    );
+    if (sameProductUrl(url.href, String(base))) return true;
+    if (exact || new URL(productUrlKey(url.href)).search) return false;
+    const page = new URL(productUrlKey(String(base)));
+    page.search = "";
+    return sameProductUrl(url.href, page.href);
   } catch {
     return false;
   }
@@ -520,12 +543,11 @@ async function extractProduct(html, base) {
   }
 
   const variant = Array.isArray(product?.hasVariant)
-    ? (product.hasVariant.find((item) => isPageProduct(item, base)) ??
-      product.hasVariant[0])
+    ? product.hasVariant.find((item) => isPageProduct(item, base, true))
     : undefined;
   const candidates = [
     ...retailerImages(retailerData),
-    ...imageReferences(product?.image ?? variant?.image),
+    ...imageReferences(variant ? variant.image : product?.image),
     ...imageReferences(storefrontProduct?.images),
     ...imageReferences(storefrontProduct?.media),
   ];
@@ -545,7 +567,7 @@ async function extractProduct(html, base) {
       /* Ignore unsupported image URLs. */
     }
   }
-  const offers = [].concat(product?.offers ?? variant?.offers ?? []);
+  const offers = [].concat(variant?.offers ?? product?.offers ?? []);
   const offer = offers.find(
     (item) =>
       productAmount(
@@ -586,6 +608,7 @@ async function extractProduct(html, base) {
     clean(
       retailerData?.name || retailerData?.title || retailerData?.productName,
     ) ||
+    clean(variant?.name) ||
     clean(product?.name) ||
     clean(storefrontProduct?.title) ||
     clean(metadata.get("og:title")) ||
@@ -634,13 +657,27 @@ async function extractProduct(html, base) {
     !product &&
     !retailerData &&
     !storefrontProduct &&
-    /access denied|captcha|verify (?:you|your)|robot check|just a moment|security check|page not found/i.test(
+    /access denied|captcha|verify (?:you|your)|robot check|just a moment|security check/i.test(
       title + " " + name,
     )
   )
-    throw new PreviewError(
-      "This store did not make the product page accessible. Add details and photos manually.",
+    throw Object.assign(
+      new PreviewError(
+        "This store did not make the product page accessible. Add details and photos manually.",
+      ),
+      { code: "ACCESS_RESTRICTED", stage: "page", reason: "PAGE_CHALLENGE" },
     );
+  if (
+    !product &&
+    !retailerData &&
+    !storefrontProduct &&
+    /\bpage not found\b/i.test(title + " " + name)
+  )
+    throw Object.assign(new PreviewError("The product page was not found."), {
+      code: "PRODUCT_NOT_FOUND",
+      stage: "page",
+      remoteStatus: 404,
+    });
   const safeImages = [...images.values()].filter(
     (image) =>
       !/(?:^|[\/_-])(?:placeholder|no[-_]?image|image[-_]?not[-_]?found|spacer|sprite|logo|transparent)(?:[\/_.-]|$)/i.test(
@@ -804,34 +841,39 @@ function createProductImporter(options = {}) {
       ),
     );
     let result,
+      preview,
+      providerFailures,
       restrictedProvider = false;
     try {
       await policy(retailerPageUrl(input), signal);
       result = await fetchFile(input, signal, true, { beforeRequest: policy });
       if (result.url.href !== retailerPageUrl(input))
         await policy(result.url.href, signal);
+      if (!imageTypes.has(result.type))
+        preview = await extractProduct(
+          result.body.toString("utf8"),
+          result.url,
+        );
     } catch (error) {
+      const target =
+        error.productUrl || result?.url.href || retailerPageUrl(input);
       const extra = await fallbacks({
-        url: input,
-        retailer: retailerPlatform(input),
+        url: target,
+        retailer: retailerPlatform(target),
         signal,
         restricted: true,
       });
+      providerFailures = extra.failures;
       if (extra.html) {
         result = {
-          url: new URL(input),
+          url: new URL(target),
           type: "text/html",
           body: Buffer.from(extra.html),
         };
         restrictedProvider = true;
       } else {
-        if (new URL(input).hostname === "ajioapps.onelink.me")
-          throw Object.assign(
-            new PreviewError(
-              "The AJIO share link could not be resolved publicly. Try its full ajio.com product link, or add original photos manually.",
-            ),
-            { code: failureCode(error) },
-          );
+        error.stage ??= "page";
+        error.providerFailures = extra.failures;
         throw error;
       }
     }
@@ -853,6 +895,7 @@ function createProductImporter(options = {}) {
             ? "IMAGE_UNSUPPORTED_OR_TOO_SMALL"
             : "IMAGE_COPY_NOT_AUTHORIZED";
       }
+      intelligence.source.resolved_url = result.url.href;
       return {
         ready: {
           ...intelligence,
@@ -876,37 +919,55 @@ function createProductImporter(options = {}) {
       (platform === "myntra" && !/\/\d+\/buy\/?$/.test(result.url.pathname)) ||
       (platform === "ajio" && !/\/p\/[^/]+\/?$/.test(result.url.pathname))
     )
-      throw new PreviewError(
-        "This link did not return a product page. Use the full product link, or add details and photos manually.",
+      throw Object.assign(
+        new PreviewError(
+          "This link did not return a product page. Use the full product link, or add details and photos manually.",
+        ),
+        { code: "METADATA_NOT_FOUND", stage: "metadata", providerFailures },
       );
-    let html = result.body.toString("utf8");
-    let preview;
-    try {
-      preview = await extractProduct(html, result.url);
-    } catch (error) {
-      error.code = "ACCESS_RESTRICTED";
-      throw error;
-    }
-    let intelligence = await extractIntelligence(
+    const html = result.body.toString("utf8");
+    preview ??= await extractProduct(html, result.url);
+    const intelligence = await extractIntelligence(
       html,
       result.url.href,
       preview,
       publicUrl,
     );
+    intelligence.source.resolved_url = result.url.href;
     if (restrictedProvider) {
+      intelligence.extraction.fallback_failures = providerFailures;
       intelligence.extraction.provider = true;
       intelligence.extraction.method = "authorized_provider";
       for (const v of Object.values(intelligence.extraction.provenance))
         if (v.source) v.source = "authorized_provider";
     }
+    return { preview, intelligence, url: result.url.href, restrictedProvider };
+  }
+  async function finishMetadata(
+    { preview, intelligence, url, restrictedProvider },
+    rich,
+    missingCover = false,
+  ) {
+    const signal = AbortSignal.timeout(
+      Math.min(
+        20000,
+        Math.max(
+          1,
+          Number(options.timeout || process.env.PRODUCT_EXTRACT_TIMEOUT_MS) ||
+            20000,
+        ),
+      ),
+    );
+    const result = { url: new URL(url) };
     const incomplete =
+      missingCover ||
       !intelligence.product.title ||
       !intelligence.product.images.length ||
       intelligence.product.price.current == null;
-    if (incomplete && !restrictedProvider) {
+    if (!rich && incomplete && !restrictedProvider) {
       const extra = await fallbacks({
         url: result.url.href,
-        retailer: platform,
+        retailer: retailerPlatform(url),
         signal,
         restricted: false,
         browser,
@@ -920,7 +981,24 @@ function createProductImporter(options = {}) {
           extraLegacy,
           publicUrl,
         );
-        // Fill missing fields only. Source data is never silently replaced by a fallback.
+        if (missingCover) {
+          const images = intelligence.product.images;
+          const alternates = additional.product.images.filter(
+            (candidate) =>
+              !images.some(
+                (image) =>
+                  imageIdentity(image.url) === imageIdentity(candidate.url),
+              ),
+          );
+          intelligence.product.images = [
+            ...alternates.map((image) => ({
+              ...image,
+              source: extra.method,
+            })),
+            ...images,
+          ].slice(0, maxGalleryImages);
+        }
+        // Keep directly retrieved fields when supplementary metadata is available.
         for (const [key, value] of Object.entries(additional.product)) {
           if (
             intelligence.product[key] == null ||
@@ -929,10 +1007,25 @@ function createProductImporter(options = {}) {
           )
             intelligence.product[key] = value;
         }
-        for (const key of ["current", "original", "currency"])
-          if (intelligence.product.price[key] == null)
-            intelligence.product.price[key] = additional.product.price[key];
         const price = intelligence.product.price;
+        const supplementaryPrice = additional.product.price;
+        const priceKeys = ["current", "original", "currency"];
+        const compatiblePrice =
+          !price.currency ||
+          !supplementaryPrice.currency ||
+          price.currency === supplementaryPrice.currency;
+        const enrichedPrice = new Set();
+        if (compatiblePrice)
+          for (const key of priceKeys)
+            if (
+              price[key] == null &&
+              supplementaryPrice[key] != null &&
+              (key !== "currency" ||
+                price.current === supplementaryPrice.current)
+            ) {
+              price[key] = supplementaryPrice[key];
+              enrichedPrice.add("price." + key);
+            }
         if (
           price.current != null &&
           price.original != null &&
@@ -951,7 +1044,8 @@ function createProductImporter(options = {}) {
         ))
           if (
             intelligence.extraction.provenance[key]?.state === "missing" &&
-            value.source
+            value.source &&
+            (!key.startsWith("price.") || enrichedPrice.has(key))
           )
             intelligence.extraction.provenance[key] = {
               ...value,
@@ -971,49 +1065,62 @@ function createProductImporter(options = {}) {
       category: model.category || "",
       images: model.images.map((i) => i.url),
     };
-    if (
-      !preview.images.length &&
-      !preview.name &&
-      preview.price === null &&
-      !preview.description &&
-      !preview.brand &&
-      !preview.category
-    )
+    if (!preview.images.length && !preview.name)
       throw Object.assign(
         new PreviewError(
           "No product information was accessible for this link. Add details and photos manually.",
         ),
-        { code: "METADATA_NOT_FOUND" },
+        {
+          code: "METADATA_NOT_FOUND",
+          stage: "metadata",
+          providerFailures: intelligence.extraction.fallback_failures,
+        },
       );
     return { preview, intelligence };
   }
-  async function loadProduct(input, detailsOnly = false) {
-    let metadata;
-    const cachedMetadata = metadataCache.get(input);
-    if (cachedMetadata?.until > Date.now())
-      metadata = structuredClone(cachedMetadata.value);
-    else {
-      let task = metadataPending.get(input);
-      if (!task) {
-        task = readMetadata(input);
-        metadataPending.set(input, task);
-      }
-      try {
-        metadata = structuredClone(await task);
-        if (Buffer.byteLength(JSON.stringify(metadata)) <= 512 * 1024) {
-          while (metadataCache.size >= 16)
-            metadataCache.delete(metadataCache.keys().next().value);
-          metadataCache.set(input, {
-            value: structuredClone(metadata),
-            until: Date.now() + priceTTL,
-          });
-        }
-      } finally {
-        if (metadataPending.get(input) === task) metadataPending.delete(input);
-      }
+  async function cachedMetadata(key, read) {
+    const hit = metadataCache.get(key);
+    if (hit?.until > Date.now()) return structuredClone(hit.value);
+    let task = metadataPending.get(key);
+    if (!task) {
+      task = read();
+      metadataPending.set(key, task);
     }
+    try {
+      const value = await task;
+      if (
+        metadataPending.get(key) === task &&
+        Buffer.byteLength(JSON.stringify(value)) <= 512 * 1024
+      ) {
+        while (metadataCache.size >= 16)
+          metadataCache.delete(metadataCache.keys().next().value);
+        metadataCache.set(key, {
+          value: structuredClone(value),
+          until: Date.now() + priceTTL,
+        });
+      }
+      return structuredClone(value);
+    } finally {
+      if (metadataPending.get(key) === task) metadataPending.delete(key);
+    }
+  }
+  async function loadProduct(input, detailsOnly, mode) {
+    const metadata = await cachedMetadata(input, () => readMetadata(input));
     if (metadata.ready) return metadata.ready;
-    const { preview, intelligence } = metadata;
+    const direct = mode === "rich";
+    const coverOnly = direct || mode === "enriched-preview";
+    const initial = cache.get(input + "#rich")?.value;
+    const missingCover = !!initial && !initial.images.length;
+    const enrich = () =>
+      cachedMetadata(input + "#enriched", () =>
+        finishMetadata(metadata, false, missingCover),
+      );
+    const { preview, intelligence } = direct
+      ? await finishMetadata(structuredClone(metadata), true).catch((error) => {
+          if (error.code !== "METADATA_NOT_FOUND") throw error;
+          return enrich();
+        })
+      : await enrich();
     const model = intelligence.product;
     if (detailsOnly)
       return {
@@ -1025,9 +1132,29 @@ function createProductImporter(options = {}) {
         discountPercentage: model.price.discount_percentage,
       };
     const signal = AbortSignal.timeout(
-      Math.min(8000, Math.max(1, Number(options.imageTimeout) || 8000)),
+      Math.min(
+        coverOnly ? 4500 : 8000,
+        Math.max(1, Number(options.imageTimeout) || 8000),
+      ),
     );
-    const candidates = preview.images.slice(0, 48);
+    // Known thumbnail transforms under the minimum decoded image width cannot
+    // supply the cover. Keep source ordering for all other candidates.
+    const candidates = coverOnly
+      ? model.images
+          .filter((image) => imageResolution(image.url) >= 150)
+          .slice(0, 8)
+      : model.images;
+    const checkImageCopy = (url) => {
+      if (copyRestricted && !copyHosts.includes(new URL(url).hostname))
+        throw Object.assign(
+          new Error("Image copying is not enabled for this source."),
+          {
+            code: "IMAGE_COPY_NOT_AUTHORIZED",
+          },
+        );
+    };
+    const galleryLimit = coverOnly ? 1 : maxGalleryImages;
+    const batch = coverOnly ? 1 : 3;
     const available = [];
     const fingerprints = new Set();
     let size = 0;
@@ -1036,23 +1163,29 @@ function createProductImporter(options = {}) {
     for (
       let start = 0;
       start < candidates.length && !signal.aborted;
-      start += 3
+      start += batch
     ) {
       const fetched = await Promise.allSettled(
-        candidates.slice(start, start + 3).map(async (url) => {
-          if (copyRestricted && !copyHosts.includes(new URL(url).hostname))
-            throw Object.assign(
-              new Error("Image copying is not enabled for this source."),
-              { code: "IMAGE_COPY_NOT_AUTHORIZED" },
-            );
-          return fetchFile(url, signal, false, { beforeRequest: policy });
+        candidates.slice(start, start + batch).map(async ({ url }) => {
+          checkImageCopy(url);
+          const file = await fetchFile(url, signal, false, {
+            beforeRequest: async (target, requestSignal) => {
+              checkImageCopy(target);
+              await policy(target, requestSignal);
+            },
+          });
+          checkImageCopy(file.url.href);
+          return file;
         }),
       );
       for (let index = 0; index < fetched.length; index++) {
         const response = fetched[index],
-          info = model.images[start + index];
+          info = candidates[start + index];
         if (response.status === "rejected") {
           info.status = "failed";
+          info.stage = response.reason?.stage ?? "image";
+          info.reason = response.reason?.reason;
+          info.remote_status = response.reason?.remoteStatus;
           info.code =
             response.reason?.code === "IMAGE_COPY_NOT_AUTHORIZED"
               ? "IMAGE_COPY_NOT_AUTHORIZED"
@@ -1071,7 +1204,7 @@ function createProductImporter(options = {}) {
         }
         fingerprints.add(fingerprint);
         if (
-          available.length === maxGalleryImages ||
+          available.length === galleryLimit ||
           size + file.body.length > maxGalleryBytes
         ) {
           info.status = "not_checked";
@@ -1098,8 +1231,8 @@ function createProductImporter(options = {}) {
         available.push(image);
         size += file.body.length;
       }
-      if (available.length === maxGalleryImages) {
-        limited ||= start + 3 < candidates.length;
+      if (available.length === galleryLimit) {
+        limited ||= start + batch < candidates.length;
         break;
       }
     }
@@ -1125,6 +1258,7 @@ function createProductImporter(options = {}) {
     input,
     refresh = false,
     detailsOnly = false,
+    mode,
   ) {
     const originalInput = publicUrl(input).href;
     const clientValue = (value) => {
@@ -1134,11 +1268,21 @@ function createProductImporter(options = {}) {
     };
     const requestedKey = retailerPageUrl(originalInput),
       now = Date.now();
-    const pageKey = aliases.get(requestedKey) || requestedKey;
-    const key = pageKey + (detailsOnly ? "#metadata" : "");
-    if (refresh) {
+    const urlAlias = aliases.get(productUrlKey(requestedKey));
+    const idAlias = aliases.get(retailerProductKey(requestedKey));
+    const alias = [urlAlias, idAlias].find((entry) => entry?.until > now);
+    const pageKey = alias?.pageKey || requestedKey;
+    const key = pageKey + (mode ? "#" + mode : detailsOnly ? "#metadata" : "");
+    const hit = cache.get(key);
+    if (refresh && !pending.has(key)) {
       metadataCache.delete(pageKey);
-      for (const oldKey of [pageKey, pageKey + "#metadata"]) {
+      metadataCache.delete(pageKey + "#enriched");
+      for (const oldKey of [
+        pageKey,
+        pageKey + "#metadata",
+        pageKey + "#rich",
+        pageKey + "#enriched-preview",
+      ]) {
         const old = cache.get(oldKey);
         if (old) {
           cachedBytes -= old.bytes;
@@ -1148,7 +1292,6 @@ function createProductImporter(options = {}) {
     }
     const retailer = retailerPlatform(pageKey),
       started = Date.now();
-    const hit = cache.get(key);
     if (!refresh && hit && hit.until > now) {
       if (hit.error) throw hit.error;
       const value = structuredClone(hit.value);
@@ -1163,7 +1306,7 @@ function createProductImporter(options = {}) {
       });
       return clientValue(value);
     }
-    if (hit) {
+    if (cache.has(key)) {
       cachedBytes -= hit.bytes;
       cache.delete(key);
     }
@@ -1171,14 +1314,17 @@ function createProductImporter(options = {}) {
     if (pending.size >= 4 || (retailerWork.get(retailer) || 0) >= 2)
       throw new PreviewError("Too many previews. Try again in a moment.", 429);
     retailerWork.set(retailer, (retailerWork.get(retailer) || 0) + 1);
-    const task = loadProduct(pageKey, detailsOnly);
+    const task = loadProduct(pageKey, detailsOnly, mode);
     pending.set(key, task);
     try {
       const value = await task;
+      const priceUntil =
+        (Date.parse(value.extraction?.extracted_at) || Date.now()) + priceTTL;
       if (value.extraction)
-        value.extraction.price_expires_at = new Date(
-          Date.now() + priceTTL,
-        ).toISOString();
+        value.extraction.price_expires_at =
+          value.price == null && value.originalPrice == null
+            ? null
+            : new Date(priceUntil).toISOString();
       if (value.product) {
         const missing = value.extraction.missing_fields.filter(
           (k) => k !== "images",
@@ -1219,11 +1365,16 @@ function createProductImporter(options = {}) {
         value.extraction.coverage = { present: 9 - missing.length, total: 9 };
         value.status = missing.length ? "partial" : "success";
         value.code = missing.length ? "PARTIAL_EXTRACTION" : null;
-        const canonical = retailerPageUrl(
-          publicUrl(value.source.canonical_url).href,
-        );
-        if (aliases.size >= 128) aliases.delete(aliases.keys().next().value);
-        aliases.set(canonical, pageKey);
+        if (value.name && value.images.length && value.source.resolved_url) {
+          for (const identity of [
+            productUrlKey(value.source.resolved_url),
+            retailerProductKey(value.source.resolved_url),
+          ].filter(Boolean)) {
+            if (aliases.size >= 128)
+              aliases.delete(aliases.keys().next().value);
+            aliases.set(identity, { pageKey, until: Date.now() + identityTTL });
+          }
+        }
       }
       log({
         event: "product_extraction",
@@ -1249,7 +1400,9 @@ function createProductImporter(options = {}) {
         cache.set(key, {
           value,
           bytes,
-          until: Date.now() + priceTTL,
+          until: value.extraction?.price_expires_at
+            ? priceUntil
+            : Date.now() + priceTTL,
           identityUntil: Date.now() + identityTTL,
         });
         cachedBytes += bytes;
@@ -1261,7 +1414,14 @@ function createProductImporter(options = {}) {
         error instanceof PreviewError
           ? new PreviewError(error.message, error.status)
           : new Error(error.message),
-        { code, name: error.name, remoteStatus: error.remoteStatus },
+        {
+          code,
+          name: error.name,
+          remoteStatus: error.remoteStatus,
+          stage: error.stage ?? "page",
+          reason: error.reason,
+          providerFailures: error.providerFailures,
+        },
       );
       log({
         event: "product_extraction",
@@ -1269,17 +1429,25 @@ function createProductImporter(options = {}) {
         status: error.code === "ACCESS_RESTRICTED" ? "restricted" : "failed",
         code: error.code,
         http_failure: error.remoteStatus || null,
+        stage: error.stage,
+        reason: error.reason,
+        provider_failures: error.providerFailures,
         duration_ms: Date.now() - started,
         cache: "miss",
       });
       // Retain stable identity/images on transient refresh errors, but never display an expired price as current.
       if (
-        !refresh &&
-        hit?.value &&
+        hit?.value?.name &&
         hit.identityUntil > Date.now() &&
-        !["ACCESS_RESTRICTED", "INVALID_URL", "PRODUCT_NOT_FOUND"].includes(
-          error.code,
-        )
+        [
+          "CONNECTION_RESET",
+          "NETWORK_UNAVAILABLE",
+          "EXTRACTION_TIMEOUT",
+          "POLICY_TIMEOUT",
+          "POLICY_UNAVAILABLE",
+          "RATE_LIMITED",
+          "EXTRACTION_FAILED",
+        ].includes(error.code)
       ) {
         const value = structuredClone(hit.value);
         value.price = null;
@@ -1427,6 +1595,9 @@ function productImportMiddleware(req, res, next) {
       } catch {
         throw new PreviewError("Enter a valid HTTPS product link.", 400);
       }
+      const mode = ["rich", "enriched-preview"].includes(payload?.mode)
+        ? payload.mode
+        : undefined;
       respond(
         res,
         200,
@@ -1434,7 +1605,8 @@ function productImportMiddleware(req, res, next) {
           importProduct(
             payload?.url,
             payload?.refresh === true,
-            payload?.detailsOnly === true,
+            payload?.detailsOnly === true && !mode,
+            mode,
           ),
           caller.signal,
         ),
@@ -1462,6 +1634,11 @@ function productImportMiddleware(req, res, next) {
                   ? "unsupported"
                   : "failed",
             code: failureCode(error),
+            stage:
+              error.stage ?? (error.status === 400 ? "validation" : undefined),
+            reason: error.reason,
+            remote_status: error.remoteStatus,
+            provider_failures: error.providerFailures,
             extracted_at: new Date().toISOString(),
           },
         );

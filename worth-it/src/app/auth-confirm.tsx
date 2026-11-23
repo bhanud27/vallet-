@@ -2,7 +2,7 @@ import { useLinkingURL } from "expo-linking";
 import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Text } from "react-native";
-import { confirmAccount, recoveryAllowed } from "../lib/auth";
+import { confirmAccount } from "../lib/auth";
 import { useAuth } from "../ui/AppContext";
 import { Banner, Button, Centered } from "../ui/kit";
 import { useTheme } from "../ui/theme";
@@ -22,11 +22,12 @@ export default function AuthConfirm() {
   useEffect(() => {
     if (!callback || handled.current === callback) return;
     handled.current = callback;
+    setError("");
     confirmAccount(callback)
-      .then((session) => {
+      .then(({ session, recovery }) => {
         setSession(session);
         router.replace(
-          recoveryAllowed()
+          recovery
             ? "/password-reset"
             : session.needsPassword
               ? "/signup"
@@ -46,6 +47,10 @@ export default function AuthConfirm() {
         <>
           <Banner kind="error">{error}</Banner>
           <Button
+            label="Reset your password"
+            onPress={() => router.replace("/password-reset")}
+          />
+          <Button
             label="Go to sign in"
             onPress={() => router.replace("/login")}
           />
@@ -53,7 +58,7 @@ export default function AuthConfirm() {
       ) : (
         <>
           <ActivityIndicator color={colors.accentInk} />
-          <Text style={type.body}>Verifying your email…</Text>
+          <Text style={type.body}>Verifying your email link…</Text>
         </>
       )}
     </Centered>

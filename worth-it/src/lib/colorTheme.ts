@@ -72,3 +72,51 @@ export const colorPalettes: Record<ColorMode, ThemeColors> = {
 };
 export const isColorMode = (value: unknown): value is ColorMode =>
   value === "light" || value === "dark";
+
+export const glossyMaterials = {
+  elevated: "#2C2C30",
+  secondary: "#1B1B1E",
+  navigation: "#1D1D20",
+  icon: "#B4B4BD",
+  disabled: "#71717A",
+  border: "rgba(255,255,255,0.12)",
+  emphasizedBorder: "rgba(255,255,255,0.22)",
+  edge: "rgba(255,255,255,0.30)",
+  subtleEdge: "rgba(255,255,255,0.14)",
+  cardFill: "rgba(36,36,38,0.94)",
+  navigationFill: "rgba(29,29,32,0.92)",
+  sheetFill: "rgba(44,44,48,0.97)",
+  reflection: "rgba(255,255,255,0.065)",
+  strongReflection: "rgba(255,255,255,0.105)",
+  shadow: "rgba(0,0,0,0.28)",
+  scrim: "rgba(0,0,0,0.55)",
+} as const;
+
+export const glossyColors: ThemeColors = {
+  ...darkColors,
+  bg: "#101011",
+  surface: "#242426",
+  ink: "#FAFAFA",
+  muted: "#A1A1AA",
+  border: glossyMaterials.border,
+  accent: "#E4E4E7",
+  accentInk: "#E4E4E7",
+  onAccent: "#101011",
+  accentSoft: "#38383D",
+  media: glossyMaterials.secondary,
+  strong: "#FAFAFA",
+  onStrong: "#101011",
+  placeholder: "#A1A1AA",
+  grip: "#777780",
+  buy: "#FAFAFA",
+  wait: "#CDCDD4",
+  skip: "#B4B4BD",
+  onChoice: "#101011",
+  buyBg: "#39393D",
+  waitBg: "#333337",
+  skipBg: "#2C2C30",
+  infoBg: "#303034",
+  infoInk: "#DBDBE0",
+  okBg: "#292F2D",
+  okInk: "#D2DDD7",
+};

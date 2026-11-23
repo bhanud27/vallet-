@@ -444,3 +444,47 @@ Overlay follow-up validation: lint, TypeScript and all 122 local tests passed. T
 Verification logs: .expo/settings-checks-price-check.log, .expo/settings-checks-price-ui.log, .expo/settings-checks-price-native.log. Focused Settings grids can be checked with SETTINGS_UI_ONLY=1 using the existing social-layout browser runner. All browser fixtures and exports disable connected Supabase accounts.
 
 Verification completed: npm run check passed with 140 tests; the complete browser suite passed at 390/414/1024px. The focused SETTINGS_UI_ONLY=1 CREATION_UI_ONLY=1 run passed all three sizes, including locked/editable Settings fields, activity-grid alignment, and visible source price before a deliberately gated gallery response. Android/iOS/web exports passed. Mobile grid and comparison-price screenshots were inspected. Physical Android swipe latency and retailer network latency remain device/network dependent.
+
+
+## Glossy Dark appearance
+
+Glossy Dark is a third choice under Settings → Appearance. It applies its dark palette immediately and persists on the device. Normal and Liquid Glass continue to use the saved Light, Dark, or System mode when selected. The same screens, routes, and interaction state serve all three appearances.
+
+| Element | Normal | Glossy Dark |
+|---|---|---|
+| Background and typography | Existing light and dark palettes | #101011 canvas, #FAFAFA primary text, #A1A1AA supporting text |
+| Cards and dividers | Existing solid surfaces and borders | #242426 graphite, #2C2C30 elevated surfaces, and thin translucent silver borders |
+| Fields | Existing input surface and brand focus ring | #1B1B1E fields and a silver focus ring |
+| Floating navigation | Existing capsules and active states | #1D1D20 capsule base, brighter graphite selections, silver reflection, and restrained shadow |
+| Actions and branding | Existing lime-accented actions | Silver buttons and engagement states. The official logo, lime price tags, and the existing lime Create shortcut retain their brand treatment. |
+
+### Shared implementation and changed files
+
+| Area | Files |
+|---|---|
+| Palette and preference | [colorTheme.ts](../src/lib/colorTheme.ts), [theme.ts](../src/ui/theme.ts), [AppThemeProvider.tsx](../src/ui/AppThemeProvider.tsx), [AppearanceSettings.tsx](../src/ui/AppearanceSettings.tsx) |
+| Materials and controls | [ThemeSurface.tsx](../src/ui/ThemeSurface.tsx), [ThemeBackdrop.tsx](../src/ui/ThemeBackdrop.tsx), [FloatingSurface.tsx](../src/ui/FloatingSurface.tsx), [AppTabs.tsx](../src/ui/AppTabs.tsx), [kit.tsx](../src/ui/kit.tsx) |
+| Shopping, discovery and notifications | [index.tsx](../src/app/index.tsx), [discover.tsx](../src/app/discover.tsx), [notifications.tsx](../src/app/notifications.tsx), [poll and post details](../src/app/p/%5Bid%5D.tsx), [CreationBody.tsx](../src/ui/CreationBody.tsx) |
+| Creation and product preview | [ContentComposer.tsx](../src/ui/ContentComposer.tsx), [ProductEditor.tsx](../src/ui/creation/ProductEditor.tsx), [ProductPreviewCard.tsx](../src/ui/creation/ProductPreviewCard.tsx), [ProductEditSheet.tsx](../src/ui/creation/ProductEditSheet.tsx) |
+| Checks, media and overlays | [reels.tsx](../src/app/reels.tsx), [ReelPage.tsx](../src/ui/ReelPage.tsx), [FeedReelPost.tsx](../src/ui/FeedReelPost.tsx), [GalleryMedia.tsx](../src/ui/GalleryMedia.tsx), [ConversationPanel.tsx](../src/ui/ConversationPanel.tsx), [SharePanel.tsx](../src/ui/SharePanel.tsx), [ContentTap.tsx](../src/ui/ContentTap.tsx), [StarButton.tsx](../src/ui/StarButton.tsx) |
+| Verification | [theme.test.ts](../tests/theme.test.ts), [glossy-flows.cjs](../tests/e2e/glossy-flows.cjs), [social-layout.cjs](../tests/e2e/social-layout.cjs) |
+
+Feed cards, Settings groups, profile panels, and the creator reuse ThemeSurface. Its static reflection sits behind content. The same reflection is used on existing pressable cards and animated sheets. Shared fields style search and forms, and shared buttons handle primary, secondary, disabled, and loading states.
+
+On Android API 31 and newer, eligible floating bars can use the existing Expo Blur target. The bars share one decorative backdrop target, keeping per-card blur out of product media and scrolling cards. Android modal sheets and older Android versions use the graphite fallback. Reduced-effects preferences keep static outlines and solid fills. Reflections use React Native background gradients and require no additional package. Physical Android blur and performance still require a device run. [React Native view style props](https://reactnative.dev/docs/view-style-props)
+
+### Screenshots
+
+The screenshots show the isolated local demo and mocked product imports. The reference image was absent from the attachment, so the visual review used the written dimensions, materials, and colors.
+
+| Screen | Captures |
+|---|---|
+| Shopping feed | [390 px](screenshots/glossy-dark/390-01-shopping-feed.png), [414 px](screenshots/glossy-dark/414-01-shopping-feed.png) |
+| Floating navigation | [Dock detail](screenshots/glossy-dark/390-02-floating-navigation.png) |
+| Product import | [Link preview](screenshots/glossy-dark/390-03-product-import.png), [edit sheet](screenshots/glossy-dark/390-09-product-edit-sheet.png) |
+| Creators | [Poll](screenshots/glossy-dark/390-04-poll.png), [Compare](screenshots/glossy-dark/390-05-compare.png), [Post](screenshots/glossy-dark/390-06-post.png) |
+| Other surfaces | [Comments](screenshots/glossy-dark/390-07-comments-sheet.png), [Appearance settings](screenshots/glossy-dark/390-08-appearance-settings.png) |
+
+### Verification
+
+Lint, TypeScript, and 142 automated tests passed. Expo exported web, Android, and iOS bundles. The Glossy Dark browser suite verifies selection and persistence, reduced effects, sharp product images, price-tag colors, navigation, drafts, commenting, and local publishing at widths from 320 to 1024 pixels. The full social regression suite passed at 390, 414, and 1024 pixels.

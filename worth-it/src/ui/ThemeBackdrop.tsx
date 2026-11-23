@@ -10,7 +10,10 @@ export const useThemeBackdrop = () => useContext(Backdrop);
 /** Android captures only this decorative backdrop, never its own blur views/videos. */
 export function ThemeBackdrop({ children }: { children: React.ReactNode }) {
   const target = useRef<React.ComponentRef<typeof View> | null>(null);
-  const { glass, mode, colors } = useTheme();
+  const { glass, glossy, reducedEffects, mode, colors } = useTheme();
+  const useAndroidTarget =
+    Platform.OS === "android" &&
+    (glass || (!!glossy && !reducedEffects && Number(Platform.Version) >= 31));
   const background = (
     <View
       pointerEvents="none"
@@ -48,10 +51,8 @@ export function ThemeBackdrop({ children }: { children: React.ReactNode }) {
     </View>
   );
   return (
-    <Backdrop.Provider
-      value={Platform.OS === "android" && glass ? target : undefined}
-    >
-      {Platform.OS === "android" && glass ? (
+    <Backdrop.Provider value={useAndroidTarget ? target : undefined}>
+      {useAndroidTarget ? (
         <BlurTargetView
           ref={target}
           pointerEvents="none"

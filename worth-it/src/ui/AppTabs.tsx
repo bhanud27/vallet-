@@ -12,26 +12,39 @@ import {
 } from "../lib/floatingNavigation";
 
 type MainTab = "feed" | "search" | "reels" | "profile";
-const items: {
+type TabPath = (typeof items)[number]["path"];
+type Tab = {
   key: MainTab | "add";
   icon: SocialIconName;
   label: string;
-  path: "/" | "/search" | "/add" | "/reels" | "/profile";
-}[] = [
+  path: "/" | "/search" | "/add" | "/reels" | "/profile" | "/notifications";
+};
+const items: Tab[] = [
   { key: "feed", icon: "home", label: "Feed", path: "/" },
   { key: "search", icon: "search", label: "Spot", path: "/search" },
   { key: "add", icon: "add", label: "Add", path: "/add" },
   { key: "reels", icon: "checks", label: "Checks", path: "/reels" },
   { key: "profile", icon: "person", label: "Profile", path: "/profile" },
 ];
+const creationItems: Tab[] = [
+  { key: "feed", icon: "home", label: "Home", path: "/" },
+  { key: "search", icon: "search", label: "Explore", path: "/search" },
+  { key: "add", icon: "plus", label: "Create", path: "/add" },
+  { key: "reels", icon: "heart", label: "Activity", path: "/notifications" },
+  { key: "profile", icon: "person", label: "Profile", path: "/profile" },
+];
 function TabItem({
   item,
   selected,
+  creation,
+  onNavigate,
 }: {
   item: (typeof items)[number];
   selected: boolean;
+  creation: boolean;
+  onNavigate?: (path: TabPath) => void;
 }) {
-  const { reducedEffects, colors } = useTheme();
+  const { reducedEffects, colors, glossy, creation: tokens } = useTheme();
   const [opacity] = useState(
     () => new Animated.Value(reducedEffects && selected ? 1 : 0),
   );
@@ -44,7 +57,14 @@ function TabItem({
     animation.start();
     return () => animation.stop();
   }, [selected, reducedEffects, opacity]);
-  const color = selected ? colors.accentInk : colors.muted;
+  const center = creation && item.key === "add";
+  const color = selected
+    ? colors.accentInk
+    : glossy
+      ? glossy.icon
+      : creation
+        ? tokens.secondary
+        : colors.muted;
   return (
     <Pressable
       testID={item.key === "add" ? "new-poll" : "nav-" + item.key}
@@ -53,7 +73,11 @@ function TabItem({
       accessibilityState={{ selected }}
       aria-pressed={selected}
       onPress={() =>
-        item.key === "add" ? router.push(item.path) : router.navigate(item.path)
+        onNavigate
+          ? onNavigate(item.path)
+          : item.key === "add"
+            ? router.push(item.path)
+            : router.navigate(item.path)
       }
       style={({ pressed }) => ({
         flex: 1,
@@ -66,38 +90,68 @@ function TabItem({
         opacity: pressed ? 0.72 : 1,
       })}
     >
-      <View
-        style={{
-          width: 36,
-          height: 30,
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Animated.View
-          pointerEvents="none"
+      {center ? (
+        <View
           style={{
-            position: "absolute",
-            width: 36,
-            height: 30,
-            borderRadius: 12,
-            backgroundColor: colors.accentSoft,
-            opacity,
+            width: 50,
+            height: 50,
+            borderRadius: 25,
+            backgroundColor: colors.tag,
+            alignItems: "center",
+            justifyContent: "center",
           }}
-        />
-        <SocialIcon name={item.icon} color={color} size={26} />
-      </View>
-      <Text
-        style={{
-          fontSize: 11,
-          lineHeight: 14,
-          fontWeight: selected ? "700" : "500",
-          color,
-        }}
-      >
-        {item.label}
-      </Text>
-      {selected ? (
+        >
+          <SocialIcon
+            name="plus"
+            color={glossy ? colors.tagInk : colors.onAccent}
+            size={24}
+          />
+        </View>
+      ) : (
+        <>
+          <View
+            style={{
+              width: 36,
+              height: 30,
+              borderRadius: 12,
+              backgroundColor:
+                glossy && item.key === "add" ? glossy.elevated : undefined,
+              borderWidth: glossy && item.key === "add" ? 1 : 0,
+              borderColor: glossy?.emphasizedBorder,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: "absolute",
+                width: 36,
+                height: 30,
+                borderRadius: 12,
+                backgroundColor: colors.accentSoft,
+                opacity,
+              }}
+            />
+            <SocialIcon
+              name={item.icon}
+              color={glossy && item.key === "add" ? colors.ink : color}
+              size={26}
+            />
+          </View>
+          <Text
+            style={{
+              fontSize: 11,
+              lineHeight: 14,
+              fontWeight: selected ? "700" : "500",
+              color,
+            }}
+          >
+            {item.label}
+          </Text>
+        </>
+      )}
+      {!center && selected ? (
         <View
           pointerEvents="none"
           style={{
@@ -116,8 +170,12 @@ function TabItem({
 export function AppTabs({
   active,
   safeAreaSides = true,
+  creation = false,
+  onNavigate,
 }: {
-  active: MainTab;
+  active: MainTab | "add";
+  creation?: boolean;
+  onNavigate?: (path: TabPath) => void;
   safeAreaSides?: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -136,16 +194,19 @@ export function AppTabs({
         flexShrink: 0,
         paddingTop: FLOATING_NAV.gap,
         paddingBottom: insets.bottom + FLOATING_NAV.gap,
-        paddingLeft: floatingSidePadding(insets.left, safeAreaSides),
-        paddingRight: floatingSidePadding(insets.right, safeAreaSides),
+        paddingLeft:
+          floatingSidePadding(insets.left, safeAreaSides) + (creation ? 4 : 0),
+        paddingRight:
+          floatingSidePadding(insets.right, safeAreaSides) + (creation ? 4 : 0),
       }}
     >
       <FloatingSurface
         radius={40}
+        creation={creation}
         testID="navigation-surface"
         containerStyle={{
           width: "100%",
-          maxWidth: FLOATING_NAV.maxWidth,
+          maxWidth: creation ? 480 : FLOATING_NAV.maxWidth,
           alignSelf: "center",
         }}
         style={{
@@ -156,8 +217,14 @@ export function AppTabs({
           alignItems: "center",
         }}
       >
-        {items.map((item) => (
-          <TabItem key={item.key} item={item} selected={item.key === active} />
+        {(creation ? creationItems : items).map((item) => (
+          <TabItem
+            key={item.key}
+            item={item}
+            selected={item.key === active}
+            creation={creation}
+            onNavigate={onNavigate}
+          />
         ))}
       </FloatingSurface>
     </View>

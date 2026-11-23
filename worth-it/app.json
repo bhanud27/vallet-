@@ -10,6 +10,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.worthit.app",
       "predictiveBackGestureEnabled": false,
       "icon": "./assets/brand-logo.png"
     },
@@ -26,11 +27,41 @@
       "expo-secure-store",
       "expo-image",
       "expo-asset",
-      "expo-system-ui"
+      "expo-system-ui",
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": [
+              "text/plain"
+            ]
+          },
+          "ios": {
+            "enabled": false
+          }
+        }
+      ]
     ],
     "scheme": "worthit",
     "experiments": {
       "typedRoutes": false
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "9dd779f3-ba25-4c8a-9f15-4af063221266"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/9dd779f3-ba25-4c8a-9f15-4af063221266"
     }
   }
 }

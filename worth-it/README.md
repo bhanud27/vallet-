@@ -35,6 +35,37 @@ Use the star on a poll or reel to add or remove your reaction. A poll gallery ca
 
 Expo's local server handles previews on the same port. For hosted builds, run `npm run import:server` behind an HTTPS endpoint and set `EXPO_PUBLIC_PRODUCT_IMPORT_URL` to that endpoint's origin before building. If the web app is on a different origin, set `PRODUCT_IMPORT_ORIGIN` to its origin on the importer.
 
+## Share a product into Worth It on Android
+
+The Android development build registers Worth It? for shared plain text, including product links and links inside retailer messages. A share waits for the existing sign-in or account verification flow when needed. The creator keeps one draft for shared products separately from the regular draft. Sharing the same product again reuses its existing preview or in-flight request. Sharing a different link starts a fresh shared-product draft.
+
+Run these commands from the project folder. The Expo Build profile produces a development APK for internal installation.
+
+```bash
+npx eas-cli@latest login
+npx eas-cli@latest build --platform android --profile development
+npx expo start --dev-client
+```
+
+If Expo Build asks to link a cloud project, follow its prompt. If the CLI reports that it cannot write the dynamic config, add the project ID it prints under `expo.extra.eas.projectId` in `app.json`. Open the build link on the phone and install the APK. Keep Metro running and open the development server in Worth It? once before testing. The phone and the computer should be on the same network. The development server serves the existing preview API unless an alternate origin is configured.
+
+With the Android SDK and a USB-debugging device, `npx expo run:android --device` builds and installs directly. The native share target belongs to the Worth It development APK. [Expo development builds](https://docs.expo.dev/develop/development-builds/introduction/) and [Expo Sharing for SDK 58](https://docs.expo.dev/versions/v58.0.0/sdk/sharing/)
+
+1. Open a product in Meesho, Myntra, AJIO, or an Android browser and tap **Share → Worth It?**.
+2. Check that Create opens with the link filled in. A usable preview shows the available product data and the existing **Poll**, **Compare**, and **Post** actions.
+3. Repeat with Worth It in the foreground, background, and after closing it. Share the same URL while its preview is loading and confirm the app stays in one Create screen.
+4. If a retailer denies automated access, confirm the link stays visible and **Try again**, **Add manually**, and **Upload photo** remain available.
+
+## Test password reset
+
+In Supabase, open **Authentication → URL Configuration → Redirect URLs**. The Android development app requests `worthit://auth-confirm`. For browser testing, add the exact browser origin followed by `/auth-confirm`, for example `http://localhost:8081/auth-confirm` or the callback on your deployed HTTPS site. Keep the recovery email template's `{{ .ConfirmationURL }}` link.
+
+On the phone, install the Android development APK using **Install** on its Expo build page. On the computer, run `npx expo start --dev-client --lan`, then open Worth It on the same Wi-Fi and connect to Metro. From **Sign in → Forgot password?**, request a fresh email. Open the newest link on the device and in the app or browser that requested it. A successful link opens **Choose a new password**.
+
+For a browser-only check on the computer, run `npm run web` and request and open the link in the same browser profile. The Expo Go LAN callback falls back to the project's Site URL on the hosted Supabase Auth service, so the password reset screen directs Expo Go testers to the development app or browser.
+
+
+
 ## Set up connected mode (needed for the real two-phone test)
 
 1. **Create a Supabase project** at supabase.com.

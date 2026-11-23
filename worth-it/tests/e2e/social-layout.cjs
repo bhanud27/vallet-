@@ -5,8 +5,10 @@ const { createServer } = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const project = path.resolve(__dirname, "../..");
-const output = path.join(project, process.env.SETTINGS_UI_ONLY === "1" ? ".expo/settings-ui-check" : ".expo/social-ui-check");
-const shots = path.join(project, ".expo/social-ui-shots");
+const glossyOnly = process.env.GLOSSY_UI_ONLY === "1";
+const output = path.join(project, glossyOnly ? ".expo/glossy-ui-check" : process.env.SETTINGS_UI_ONLY === "1" ? ".expo/settings-ui-check" : process.env.CREATION_UI_ONLY === "1" ? ".expo/creation-ui-check" : ".expo/social-ui-check");
+const regressionShots = path.join(project, ".expo/social-ui-shots");
+const shots = process.env.GLOSSY_SCREENSHOT_DIR || regressionShots;
 async function main() {
   const cli = path.join(
     path.dirname(require.resolve("expo/package.json")),
@@ -35,6 +37,7 @@ async function main() {
       "Demo export failed: " + (built.stderr || built.stdout).slice(-1200),
     );
   console.log("Isolated local demo export passed.");
+  fs.mkdirSync(regressionShots, { recursive: true });
   fs.mkdirSync(shots, { recursive: true });
   const mime = {
     ".html": "text/html",
@@ -94,6 +97,7 @@ async function main() {
       ...(channel ? { channel } : {}),
     });
     for (const [width, height] of [
+      ...(glossyOnly || process.env.CREATION_UI_ONLY === "1" ? [[320, 700]] : []),
       [390, 844],
       [414, 900],
       [1024, 800],
@@ -118,6 +122,12 @@ async function main() {
         });
         await page.goto(base);
         await expect(page.getByTestId("mode-banner")).toBeVisible();
+        if (glossyOnly) {
+          await require("./glossy-flows.cjs").verifyGlossy({ page, base, project, shots, width, expect });
+          expect(errors).toEqual([]);
+          await context.close();
+          continue;
+        }
         if (process.env.SETTINGS_UI_ONLY === "1") {
           await require("./settings-grid-flows.cjs").verifySettingsGrids({
             page,
@@ -1052,54 +1062,31 @@ async function main() {
           .getByRole("button", { name: "Close comments", exact: true })
           .click();
         await page.goto(base + "/new");
-        await page
-          .getByRole("textbox", {
-            name: "Product link (optional)",
-            exact: true,
-          })
-          .fill("https://example.com/draft");
-        const itemName = page.getByRole("textbox", {
-          name: "Product name",
+        const draftLink = page.getByRole("textbox", {
+          name: "Paste any product link",
           exact: true,
         });
-        await itemName.fill("Saved dark draft");
+        const savedUrl = "https://example.com/saved-dark-draft";
+        await draftLink.fill(savedUrl);
         await expect
-          .poll(() =>
-            itemName.evaluate((node) => getComputedStyle(node).borderTopColor),
-          )
+          .poll(() => page.getByTestId("product-link-input").evaluate((node) => getComputedStyle(node).borderTopColor))
           .toBe("rgb(206, 255, 102)");
         await expect
-          .poll(() => itemName.evaluate((node) => getComputedStyle(node).color))
+          .poll(() => draftLink.evaluate((node) => getComputedStyle(node).color))
           .toBe("rgb(245, 245, 245)");
         await expect
-          .poll(() =>
-            page.evaluate(() =>
-              Object.values(localStorage).some((value) =>
-                value.includes("Saved dark draft"),
-              ),
-            ),
-          )
+          .poll(() => page.evaluate((url) => Object.values(localStorage).some((value) => value.includes(url)), savedUrl))
           .toBe(true);
-        await page.screenshot({
-          path: path.join(shots, width + "-dark-form.png"),
-        });
+        await page.screenshot({ path: path.join(shots, width + "-dark-form.png") });
         await page.goto(base + "/settings/appearance");
         await page.getByRole("radio", { name: "Light", exact: true }).click();
         await expect
-          .poll(() =>
-            page.evaluate(() => document.documentElement.style.colorScheme),
-          )
+          .poll(() => page.evaluate(() => document.documentElement.style.colorScheme))
           .toBe("light");
         await page.goto(base + "/new");
-        await expect(
-          page.getByRole("textbox", { name: "Product name", exact: true }),
-        ).toHaveValue("Saved dark draft");
+        await expect(draftLink).toHaveValue(savedUrl);
         await expect
-          .poll(() =>
-            page
-              .getByRole("textbox", { name: "Product name", exact: true })
-              .evaluate((node) => getComputedStyle(node).color),
-          )
+          .poll(() => draftLink.evaluate((node) => getComputedStyle(node).color))
           .toBe("rgb(29, 27, 45)");
 
         // Own-profile fixtures are confined to this isolated local browser context.
@@ -1519,13 +1506,9 @@ async function main() {
         ).toBeVisible();
         await page.goto(base);
         await page.getByRole("button", { name: "Add", exact: true }).click();
-        await page.getByRole("button", { name: "Poll", exact: true }).click();
-        await expect(page).toHaveURL(/\/new$/);
+        await expect(page).toHaveURL(/\/add$/);
         await expect(
-          page.getByRole("textbox", {
-            name: "Product link (optional)",
-            exact: true,
-          }),
+          page.getByRole("textbox", { name: "Paste any product link", exact: true }),
         ).toBeVisible();
         await require("./creation-flows.cjs").verifyCreation({
           page,
@@ -1563,7 +1546,7 @@ async function main() {
         );
       } catch (error) {
         await page.screenshot({
-          path: path.join(shots, width + "-failure.png"),
+          path: path.join(regressionShots, width + "-failure.png"),
         });
         console.error((await page.locator("body").innerText()).slice(-1500));
         console.error(

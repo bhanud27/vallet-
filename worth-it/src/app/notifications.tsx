@@ -1,3 +1,4 @@
+import { GlossyReflection } from "../ui/ThemeSurface";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -177,6 +178,7 @@ export default function NotificationsScreen() {
           onPress={() => open(item)}
           style={styles.item}
         >
+          <GlossyReflection />
           <SocialIcon
             name={item.kind.endsWith("_comment") ? "message" : "person"}
             color={colors.accentInk}
@@ -211,7 +213,7 @@ export default function NotificationsScreen() {
     </Screen>
   );
 }
-const useStyles = themedStyles(({ colors }) =>
+const useStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
     item: {
       flexDirection: "row",
@@ -220,7 +222,8 @@ const useStyles = themedStyles(({ colors }) =>
       padding: 14,
       borderColor: colors.border,
       borderWidth: 1,
-      backgroundColor: colors.surface,
+      backgroundColor: glossy?.cardFill ?? colors.surface,
+      overflow: glossy ? "hidden" : undefined,
       borderRadius: 15,
     },
     content: { flex: 1, gap: 2 },

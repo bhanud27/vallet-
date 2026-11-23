@@ -1,31 +1,89 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { BackHandler, Image, Pressable, Text, View } from "react-native";
-import { Stack, router, useLocalSearchParams } from "expo-router";
+import {
+  Keyboard,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  Pressable,
+} from "react-native";
+import {
+  router,
+  useLocalSearchParams,
+  usePreventRemove,
+  type Href,
+} from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { randomUUID } from "expo-crypto";
+import {
+  productShareInbox,
+  sharedProductUrl as readSharedProductUrl,
+} from "../lib/incomingProductShare";
 import { pollDraftStore } from "../lib/pollDraft";
 import type { PollDraft } from "../lib/draftStore";
 import { productFields, productDetails } from "../lib/productDetails";
-import { normalizeCreationSpec, type CreationSpec } from "../lib/creationSpec";
+import { normalizeCreationSpec } from "../lib/creationSpec";
 import type {
   CreationDraft,
   CreationMedia,
   ProductDraft,
 } from "../lib/creationDraft";
-import { parsePrice, detectProductUrl } from "../lib/validation";
-import type { Poll, PollCategory, PublishProgress } from "../lib/types";
+import { parsePrice, detectProductUrl, validatePoll } from "../lib/validation";
+import { MAX_POLL_MEDIA, type NewPollInput } from "../lib/types";
 import { supabase } from "../lib/supabase";
 import { optionalRpc } from "../lib/backendRpc";
 import { repo } from "../lib/repo";
-import { socialRepo } from "../lib/socialRepo";
+import { floatingDockHeight } from "../lib/floatingNavigation";
 import { useApp } from "./AppContext";
 import { useTheme } from "./theme";
 import { Banner, Button, Field } from "./kit";
-import { DraftProductCover, ProductEditor } from "./creation/ProductEditor";
-import { CreationScreen as Screen, CreationSurface } from "./creation/Surface";
-import { CreationBody } from "./CreationBody";
-import { PostIdentity } from "./PostPresentation";
-import { PollCategories } from "./PollCategories";
+import {
+  PostAttachments,
+  ProductEditor,
+  hasProductPreview,
+} from "./creation/ProductEditor";
+import { CreationIconButton } from "./creation/CreationIconButton";
+import { AppTabs } from "./AppTabs";
+import { FloatingHeader } from "./FloatingHeader";
+import { BrandLogo } from "./BrandLogo";
+import { ThemeSurface } from "./ThemeSurface";
 import { SocialIcon } from "./SocialIcon";
+
+type Entry = "create" | "poll" | "post";
+type Subtype = CreationDraft["subtype"];
+
+const actions = [
+  {
+    type: "opinion",
+    title: "Poll",
+    subtitle: "Ask opinions",
+    icon: "bars",
+    publish: "Publish poll",
+  },
+  {
+    type: "compare",
+    title: "Compare",
+    subtitle: "Find the best",
+    icon: "compare",
+    publish: "Publish comparison",
+  },
+  {
+    type: "post",
+    title: "Post",
+    subtitle: "Share a find",
+    icon: "compose",
+    publish: "Publish post",
+  },
+] as const;
+
+const questions: Record<Subtype, string> = {
+  opinion: "Is this worth buying?",
+  compare: "Which one is more worth buying?",
+  post: "",
+};
+
 const makeProduct = (): ProductDraft => ({
   id: randomUUID(),
   name: "",
@@ -33,750 +91,732 @@ const makeProduct = (): ProductDraft => ({
   fields: productFields(),
   mediaIds: [],
 });
-const initial = (post: boolean): CreationDraft => ({
-  step: "product",
-  subtype: post ? "post" : "opinion",
-  products: [makeProduct()],
-  options: [
-    { id: randomUUID(), label: "Worth it" },
-    { id: randomUUID(), label: "Not worth it" },
-    { id: randomUUID(), label: "Wait for sale" },
-  ],
-  description: "",
-  location: "",
-  editing: 0,
-});
-function Workspace({ kind }: { kind: "poll" | "post" }) {
-  const { session } = useApp(),
-    { type, colors } = useTheme(),
-    post = kind === "post";
+
+function initial(entry: Entry): CreationDraft {
+  return {
+    step: "product",
+    subtype: entry === "post" ? "post" : "opinion",
+    intentChosen: entry !== "create",
+    products: [makeProduct(), makeProduct()],
+    options: ["Worth it", "Not worth it", "Wait for a sale"].map((label) => ({
+      id: randomUUID(),
+      label,
+    })),
+    description: "",
+    location: "",
+    editing: 0,
+  };
+}
+
+function restore(d: PollDraft, entry: Entry): CreationDraft {
+  if (d.creationDraft) {
+    const saved = d.creationDraft;
+    const products = [...saved.products];
+    while (products.length < 2) products.push(makeProduct());
+    const postMediaIds =
+      saved.postMediaIds ??
+      (saved.subtype === "post" ? products[0].mediaIds.slice(1) : []);
+    if (saved.subtype === "post" && !saved.postMediaIds)
+      products[0] = {
+        ...products[0],
+        mediaIds: products[0].mediaIds.slice(0, 1),
+      };
+    return {
+      ...saved,
+      postMediaIds,
+      intentChosen:
+        saved.intentChosen ??
+        (saved.subtype === "post" || saved.step !== "product"),
+      products,
+      questions: saved.questions ?? { [saved.subtype]: d.question },
+    };
+  }
+  const current = initial(entry);
+  current.products[0] = {
+    ...current.products[0],
+    name: d.itemName,
+    url: d.storeLink,
+    fields: {
+      ...productFields(),
+      ...d.productFields,
+      price: d.productFields?.price ?? d.price,
+      currency: d.productFields?.currency ?? (d.price ? "INR" : ""),
+    },
+    mediaIds: d.media.map((m) => m.id),
+    resolvedUrl: detectProductUrl(d.storeLink) ?? undefined,
+  };
+  current.questions = { [current.subtype]: d.question };
+  return current;
+}
+
+function useKeyboardOpen() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      const viewport = window.visualViewport;
+      const onResize = () =>
+        setOpen(!!viewport && window.innerHeight - viewport.height > 120);
+      viewport?.addEventListener("resize", onResize);
+      return () => viewport?.removeEventListener("resize", onResize);
+    }
+    const show = Keyboard.addListener("keyboardDidShow", () => setOpen(true));
+    const hide = Keyboard.addListener("keyboardDidHide", () => setOpen(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return open;
+}
+
+function Workspace({
+  entry,
+  sharedProductUrl,
+}: {
+  entry: Entry;
+  sharedProductUrl: string | null;
+}) {
+  const { session } = useApp();
+  const { colors, type, glossy, creation: tokens } = useTheme();
+  const insets = useSafeAreaInsets();
+  const keyboardOpen = useKeyboardOpen();
   const params = useLocalSearchParams<{ productUrl?: string }>();
+  const shared = !!sharedProductUrl;
   const store = useMemo(
-    () => pollDraftStore(session.userId, kind),
-    [session.userId, kind],
+    () =>
+      pollDraftStore(
+        session.userId,
+        shared ? "shared-product" : entry === "post" ? "post" : "poll",
+      ),
+    [entry, session.userId, shared],
   );
-  const [state, setState] = useState(() => initial(post)),
-    [media, setMedia] = useState<CreationMedia[]>([]),
-    [question, setQuestion] = useState(post ? "" : "Is this worth buying?"),
-    [category, setCategory] = useState<PollCategory | undefined>(),
-    [requestId, setRequestId] = useState(randomUUID),
-    [ready, setReady] = useState(false),
-    [busy, setBusy] = useState(false),
-    [locked, setLocked] = useState(false),
-    [more, setMore] = useState(false),
-    [note, setNote] = useState(""),
-    [error, setError] = useState(""),
-    [progress, setProgress] = useState<PublishProgress>(),
-    [username, setUsername] = useState("");
-  const [useCase, setUseCase] = useState(""),
-    [priority, setPriority] = useState(""),
-    [budget, setBudget] = useState("");
+  const [appliedShare, setAppliedShare] = useState<string | null>(null);
+  const [workspace, setWorkspace] = useState<{
+    state: CreationDraft;
+    media: CreationMedia[];
+  }>(() => ({
+    state: initial(entry),
+    media: [],
+  }));
+  const { state, media } = workspace;
+  const [requestId, setRequestId] = useState(randomUUID);
+  const [legacy, setLegacy] = useState<
+    Pick<PollDraft, "category" | "useCase" | "priority" | "budget">
+  >({ useCase: "", priority: "", budget: "" });
+  const [ready, setReady] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [isPublishing, setPublishing] = useState(false);
   const [publishAvailable, setPublishAvailable] = useState(!supabase);
+  const [error, setError] = useState("");
+  const [storageError, setStorageError] = useState("");
+  const [leaving, setLeaving] = useState<(() => void) | null>(null);
+  const [published, setPublished] = useState("");
+  const sending = useRef(false);
+  const releaseShares = useRef<(() => void) | undefined>(undefined);
+  const routing = useRef(false);
+  const completed = useRef(false);
+  const latest = useRef<PollDraft | null>(null);
+  const activeStore = useRef(store);
+  const question = state.questions?.[state.subtype] ?? questions[state.subtype];
+  const draft: PollDraft = useMemo(
+    () => ({
+      ...legacy,
+      requestId,
+      itemName: state.products[0].name,
+      price: state.products[0].fields.price,
+      question,
+      storeLink: state.products[0].url,
+      media,
+      creationDraft: state,
+    }),
+    [legacy, requestId, state, question, media],
+  );
+
+  useEffect(() => {
+    latest.current = ready && dirty ? draft : null;
+  }, [ready, dirty, draft]);
+
   useEffect(() => {
     let active = true;
-    if (supabase)
+    if (supabase) {
       void optionalRpc<boolean>(supabase, "worthit_creation_ready")
-        .then((r) => {
-          if (active) setPublishAvailable(r.available && !!r.data);
+        .then((result) => {
+          if (active) setPublishAvailable(result.available && !!result.data);
         })
         .catch(() => {
           if (active)
             setError(
-              "Could not verify publishing availability. Reopen this draft to retry.",
+              "Publishing is unavailable. Your draft is saved on this device.",
             );
         });
+    }
     return () => {
       active = false;
     };
   }, []);
-  const sending = useRef(false),
-    completed = useRef(false),
-    controller = useRef<AbortController | null>(null),
-    latest = useRef<PollDraft | null>(null);
-  const current = state.products[state.editing] ?? state.products[0];
-  const draft = useMemo(
-    () => ({
-      requestId,
-      itemName: state.products[0]?.name ?? "",
-      price: state.products[0]?.fields.price ?? "",
-      question,
-      storeLink: state.products[0]?.url ?? "",
-      category,
-      useCase,
-      priority,
-      budget,
-      media,
-      creationDraft: state,
-    }),
-    [requestId, state, question, category, media, useCase, priority, budget],
-  );
-  useEffect(() => {
-    if (ready) latest.current = draft;
-  }, [ready, draft]);
+
   useEffect(() => {
     let active = true;
-    void socialRepo
-      .getProfile(session.userId)
-      .then((p) => {
-        if (active) setUsername(p.username ?? p.displayName);
-      })
-      .catch(() => undefined);
-    void store
-      .load()
-      .then((saved) => {
+    const oldPostStore =
+      entry === "create" && !shared
+        ? pollDraftStore(session.userId, "post")
+        : undefined;
+    void (async () => {
+      let saved = await store.load();
+      if (!active) return;
+      if (!saved && oldPostStore) {
+        saved = await oldPostStore.load();
         if (!active) return;
-        if (saved) {
-          const d = saved.draft;
-          setRequestId(d.requestId);
-          setQuestion(d.question);
-          setCategory(d.category);
-          setUseCase(d.useCase);
-          setPriority(d.priority);
-          setBudget(d.budget);
-          setMedia(d.media);
-          setState(
-            d.creationDraft ?? {
-              ...initial(post),
-              products: [
-                {
-                  ...makeProduct(),
-                  name: d.itemName,
-                  url: d.storeLink,
-                  fields: {
-                    ...productFields(),
-                    ...d.productFields,
-                    price: d.productFields?.price ?? d.price,
-                    currency:
-                      d.productFields?.currency ?? (d.price ? "INR" : ""),
-                  },
-                  mediaIds: d.media.map((m) => m.id),
-                  resolvedUrl: detectProductUrl(d.storeLink) ?? undefined,
-                },
-              ],
+        if (saved) activeStore.current = oldPostStore;
+      }
+      if (saved) {
+        const d = saved.draft;
+        setRequestId(d.requestId);
+        setLegacy({
+          category: d.category,
+          useCase: d.useCase,
+          priority: d.priority,
+          budget: d.budget,
+        });
+        setWorkspace({
+          state: restore(
+            d,
+            activeStore.current === oldPostStore ? "post" : entry,
+          ),
+          media: d.media,
+        });
+        setDirty(true);
+        if (saved.missing)
+          setStorageError(
+            "Some draft photos are missing. You can add them again.",
+          );
+      } else if (!shared && typeof params.productUrl === "string") {
+        const url = detectProductUrl(params.productUrl);
+        if (url) {
+          setWorkspace(({ state, media }) => ({
+            state: {
+              ...state,
+              products: [{ ...state.products[0], url }, state.products[1]],
             },
-          );
-          setNote(
-            saved.missing
-              ? "Draft restored. Some files are missing; select them again."
-              : "Your saved draft has been restored.",
-          );
-        } else if (params.productUrl)
-          setState((s) => ({
-            ...s,
-            products: [
-              {
-                ...s.products[0],
-                url: detectProductUrl(params.productUrl!) ?? "",
-              },
-            ],
+            media,
           }));
-      })
+          setDirty(true);
+        }
+      }
+    })()
       .catch(() => {
-        if (active)
-          setError("Could not restore the draft. Check device storage.");
+        if (active) setStorageError("Could not restore your draft.");
       })
       .finally(() => {
         if (active) setReady(true);
       });
     return () => {
       active = false;
+      releaseShares.current?.();
       if (!completed.current && latest.current)
-        void store.save(latest.current).catch(() => undefined);
+        void activeStore.current.save(latest.current).catch(() => undefined);
       store.release();
+      oldPostStore?.release();
     };
+    // Ordinary product deep links seed an empty draft when opening the workspace.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store, session.userId, post]);
+  }, [store]);
+
+  const editingReady =
+    ready &&
+    (!sharedProductUrl || appliedShare === sharedProductUrl || isPublishing);
+  if (
+    ready &&
+    sharedProductUrl &&
+    appliedShare !== sharedProductUrl &&
+    !isPublishing &&
+    !published
+  ) {
+    setAppliedShare(sharedProductUrl);
+    if (detectProductUrl(state.products[0].url) !== sharedProductUrl) {
+      // Reset the share slot before its editor can fetch the previous product.
+      const next = initial(entry);
+      next.products[0].url = sharedProductUrl;
+      setWorkspace({ state: next, media: [] });
+      setRequestId(randomUUID());
+      setLegacy({ useCase: "", priority: "", budget: "" });
+      setError("");
+      setStorageError("");
+      setDirty(true);
+    }
+  }
+
   useEffect(() => {
-    if (!ready || busy || completed.current) return;
+    if (!editingReady || !dirty || isPublishing || completed.current) return;
     const timer = setTimeout(() => {
-      void store
-        .save(draft)
-        .then(() => {
-          if (!completed.current) setNote("Draft saved on this device.");
-        })
-        .catch(() =>
-          setError(
+      void activeStore.current.save(draft).catch(() => {
+        if (!completed.current)
+          setStorageError(
             "Could not save your draft. Keep this page open and check storage.",
-          ),
-        );
+          );
+      });
     }, 500);
     return () => clearTimeout(timer);
-  }, [ready, busy, draft, store]);
-  function back() {
-    if (busy || locked) return;
-    if (state.step === "preview") setState((s) => ({ ...s, step: "edit" }));
-    else if (state.step === "edit")
-      setState((s) => ({ ...s, step: post ? "product" : "intent" }));
-    else if (state.step === "intent")
-      setState((s) => ({ ...s, step: "product", editing: 0 }));
-    else if (state.editing > 0) setState((s) => ({ ...s, step: "edit" }));
-    else router.back();
-  }
-  useEffect(() => {
-    const subscription = BackHandler.addEventListener(
-      "hardwareBackPress",
-      () => {
-        if (state.step === "product" && state.editing === 0) return false;
-        back();
-        return true;
-      },
-    );
-    return () => subscription.remove();
-  });
-  const activeProducts =
-    state.subtype === "compare" ? state.products : state.products.slice(0, 1);
-  const attachments = (
-    post ? state.products.slice(0, 1) : activeProducts
-  ).flatMap((p) =>
-    p.mediaIds
-      .map((id) => media.find((m) => m.id === id))
-      .filter((m): m is CreationMedia => !!m),
+  }, [editingReady, dirty, isPublishing, draft]);
+
+  const allowRemoval = usePreventRemove(
+    (dirty || isPublishing) && !published,
+    ({ repeat }) => {
+      if (!sending.current) setLeaving(() => repeat);
+    },
   );
-  function spec(): CreationSpec {
-    return normalizeCreationSpec({
-      version: 1,
-      subtype: state.subtype,
-      products: post
-        ? []
-        : activeProducts.map((p) => ({
-            id: p.id,
-            name: p.name,
-            url: p.url ? (detectProductUrl(p.url) ?? p.url) : undefined,
-            details: productDetails(p.fields),
-            media: p.mediaIds
-              .map((id) => attachments.findIndex((m) => m.id === id))
-              .filter((i) => i >= 0),
-          })),
-      options: post
-        ? []
-        : state.subtype === "compare"
-          ? activeProducts.map((p) => ({
-              id: p.id,
-              label: p.name.trim(),
-              productId: p.id,
-            }))
-          : state.options,
-      description: state.description,
-      location: state.location,
-    })!;
+
+  useEffect(() => {
+    if (published) router.replace("/p/" + published);
+  }, [published]);
+
+  function exit(close: boolean) {
+    if (sending.current || routing.current) return;
+    if (!close && router.canGoBack()) router.back();
+    else router.dismissTo("/");
   }
-  function validateProduct(p: ProductDraft, first: boolean) {
-    if (!post && !p.name.trim()) throw new Error("Enter a product name.");
-    if (p.url.trim() && !detectProductUrl(p.url))
-      throw new Error("Enter a valid public HTTPS product link.");
-    if (
-      first &&
-      !p.mediaIds.some((id) => media.some((m) => m.id === id)) &&
-      (post || !detectProductUrl(p.url))
-    )
-      throw new Error(
-        post
-          ? "Add photos or a video first."
-          : "Add a product photo or link first.",
-      );
-    productDetails(p.fields);
-  }
-  function nextProduct() {
+
+  async function discard() {
+    if (!leaving || sending.current || completed.current) return;
+    completed.current = true;
     try {
-      validateProduct(current, state.editing === 0);
-      setError("");
-      setState((s) => ({
-        ...s,
-        step: post ? "edit" : !s.intentChosen ? "intent" : "edit",
-      }));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Check the product.");
+      await activeStore.current.clear();
+      const close = leaving;
+      setLeaving(null);
+      setDirty(false);
+      close();
+    } catch {
+      completed.current = false;
+      setLeaving(null);
+      setStorageError("Could not discard your draft. Try again.");
     }
   }
-  function preview() {
-    try {
-      if (post) validateProduct(state.products[0], true);
-      if (post && !attachments.length) throw new Error("Add a photo or video.");
-      if (!post) {
-        activeProducts.forEach((p, i) => validateProduct(p, i === 0));
-        if (!question.trim()) throw new Error("Write your poll question.");
-      }
-      if (budget.trim() && parsePrice(budget) === null)
-        throw new Error("Enter a budget in whole rupees.");
-      spec();
-      setError("");
-      setState((s) => ({ ...s, step: "preview" }));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Check your content.");
-    }
+
+  function updateDraft(change: (state: CreationDraft) => CreationDraft) {
+    setDirty(true);
+    setError("");
+    setWorkspace(({ state, media }) => ({ state: change(state), media }));
   }
+
+  const updateProduct =
+    (index: number): React.ComponentProps<typeof ProductEditor>["update"] =>
+    (change) => {
+      setDirty(true);
+      setWorkspace(({ state, media }) => {
+        const products = [...state.products];
+        const [product, files] = change(products[index], media);
+        if (product === products[index] && files === media)
+          return { state, media };
+        products[index] = product;
+        return { state: { ...state, products }, media: files };
+      });
+    };
+
+  function updatePostMedia(additions: CreationMedia[], remove?: string) {
+    setDirty(true);
+    setWorkspace(({ state, media }) => {
+      const accepted = additions.slice(0, MAX_POLL_MEDIA - media.length);
+      return {
+        state: {
+          ...state,
+          postMediaIds: [
+            ...(state.postMediaIds ?? []).filter((id) => id !== remove),
+            ...accepted.map((item) => item.id),
+          ],
+        },
+        media: [...media.filter((item) => item.id !== remove), ...accepted],
+      };
+    });
+  }
+
+  const first = state.products[0];
+  const second = state.products[1];
+  const hasPreview = hasProductPreview(first, media);
+  const selected =
+    hasPreview && state.intentChosen
+      ? actions.find((action) => action.type === state.subtype)
+      : undefined;
+  const comparing = selected?.type === "compare";
+  const posting = selected?.type === "post";
+  const disabled = isPublishing || !!state.publishLocked;
+
   async function publish() {
-    if (sending.current || !ready || !publishAvailable) return;
+    if (
+      sending.current ||
+      routing.current ||
+      !ready ||
+      !publishAvailable ||
+      !selected
+    )
+      return;
+    let input: NewPollInput;
     try {
-      const value = spec();
-      if (post) validateProduct(state.products[0], true);
-      if (post && !attachments.length) throw new Error("Add a photo or video.");
-      sending.current = true;
-      controller.current = new AbortController();
-      setBusy(true);
-      setError("");
-      await store.save(draft);
-      const first = value.products[0];
-      const poll = await repo.createPoll(
-        {
-          contentKind: kind,
-          requestId,
-          signal: controller.current.signal,
-          itemName: post
-            ? question.trim().slice(0, 80) || "Fashion post"
-            : first.name,
-          priceInr:
-            first?.details?.currency === "INR" &&
-            Number.isInteger(first.details.price)
-              ? (first.details.price ?? 0)
-              : 0,
-          question: question.trim(),
-          media: attachments,
-          productUrl: post
-            ? (detectProductUrl(state.products[0].url) ?? undefined)
-            : first?.url,
-          productDetails:
-            post && state.products[0]?.url
-              ? productDetails(state.products[0].fields)
-              : first?.details,
-          category,
-          creationSpec: value,
-          useCase,
-          priority,
-          budgetInr: budget.trim()
-            ? (parsePrice(budget) ?? undefined)
-            : undefined,
-        },
-        (p) => {
-          setProgress(p);
-          if (p.stage === "publishing") setLocked(true);
-        },
-      );
+      const products = comparing ? state.products : [first];
+      const attachments: CreationMedia[] = [];
+      const setup = products.map((product, index) => {
+        const url = detectProductUrl(product.url);
+        const ids = posting
+          ? [...product.mediaIds, ...(state.postMediaIds ?? [])]
+          : product.mediaIds;
+        const files = ids.flatMap((id) => {
+          const item = media.find((file) => file.id === id);
+          return item ? [item] : [];
+        });
+        if (product.url.trim() && !url)
+          throw new Error("Enter a valid public product link.");
+        if (!posting && !product.name.trim())
+          throw new Error(
+            index
+              ? "Add a title for the second product."
+              : "Add a product title.",
+          );
+        if (!url && !files.length)
+          throw new Error(
+            index
+              ? "Add a link or photo for the second product."
+              : "Add a product link or photo.",
+          );
+        const offset = attachments.length;
+        attachments.push(...files);
+        return {
+          id: product.id,
+          name: product.name.trim(),
+          url: url ?? undefined,
+          details: productDetails(product.fields),
+          media: files.map((_, i) => offset + i),
+        };
+      });
+      const firstProduct = setup[0];
+      const creationSpec = normalizeCreationSpec({
+        version: 1,
+        subtype: state.subtype,
+        products: posting ? [] : setup,
+        options: posting
+          ? []
+          : comparing
+            ? setup.map((p) => ({ id: p.id, label: p.name, productId: p.id }))
+            : state.options,
+        description: state.description,
+        location: state.location,
+      });
+      const price = firstProduct.details?.price ?? 0;
+      input = {
+        contentKind: posting ? "post" : "poll",
+        requestId,
+        itemName:
+          firstProduct.name || question.trim().slice(0, 80) || "Fashion post",
+        priceInr:
+          !posting &&
+          firstProduct.details?.currency === "INR" &&
+          Number.isInteger(price)
+            ? price
+            : 0,
+        question: question.trim(),
+        media: attachments,
+        productUrl: firstProduct.url,
+        productDetails: firstProduct.details,
+        category: legacy.category,
+        useCase: legacy.useCase,
+        priority: legacy.priority,
+        budgetInr: parsePrice(legacy.budget) ?? undefined,
+        creationSpec,
+      };
+      validatePoll(input);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Check your draft.");
+      return;
+    }
+
+    sending.current = true;
+    if (Platform.OS === "android")
+      releaseShares.current = productShareInbox.hold();
+    setPublishing(true);
+    setError("");
+    try {
+      await activeStore.current.save(draft);
+      const result = await repo.createPoll(input, (progress) => {
+        if (progress.stage !== "publishing") return;
+        const locked = { ...state, publishLocked: true };
+        setWorkspace((current) => ({ ...current, state: locked }));
+        const saved = { ...draft, creationDraft: locked };
+        latest.current = saved;
+        void activeStore.current.save(saved).catch(() => undefined);
+      });
       completed.current = true;
-      await store.clear().catch(() => undefined);
-      router.replace("/p/" + poll.id);
+      await activeStore.current.clear().catch(() => undefined);
+      setPublished(result.id);
     } catch (e) {
       setError(
         e instanceof Error
           ? e.message
-          : "Could not publish. Your draft is kept; retry safely.",
+          : "Could not publish. Your draft is saved.",
       );
     } finally {
+      // Successful publishing releases the next share when this workspace exits.
+      if (!completed.current) releaseShares.current?.();
       sending.current = false;
-      setBusy(false);
+      setPublishing(false);
     }
   }
-  const mock: Poll = {
-    id: requestId,
-    itemName: post ? "Fashion post" : state.products[0].name,
-    priceInr:
-      state.products[0]?.fields.currency === "INR"
-        ? Number(state.products[0].fields.price) || 0
-        : 0,
-    question,
-    productDetails: (() => {
-      try {
-        return state.products[0]?.url
-          ? productDetails(state.products[0].fields)
-          : undefined;
-      } catch {
-        return undefined;
-      }
-    })(),
-    contentKind: kind,
-    category,
-    useCase,
-    priority,
-    budgetInr: budget.trim() ? (parsePrice(budget) ?? undefined) : undefined,
-    imageUrl: attachments.find((m) => m.kind === "image")?.file.uri ?? null,
-    media: attachments.map((m) => ({ kind: m.kind, value: m.file.uri })),
-    isDemo: false,
-    demoImage: null,
-    createdAt: new Date().toISOString(),
-    username,
-    authorId: undefined,
-    creationSpec: (() => {
-      try {
-        return spec();
-      } catch {
-        return undefined;
-      }
-    })(),
-  };
-  const title =
-    state.step === "product"
-      ? post
-        ? "Create Post"
-        : state.editing
-          ? "Add another product"
-          : "Add your product"
-      : state.step === "intent"
-        ? "What do you want to know?"
-        : state.step === "preview"
-          ? "Preview"
-          : post
-            ? "Write your caption"
-            : state.subtype === "compare"
-              ? "Which is better?"
-              : "Worth It?";
+
+  async function goTo(path: Href) {
+    if (path === "/add" || sending.current || routing.current) return;
+    routing.current = true;
+    try {
+      if (dirty) await activeStore.current.save(draft);
+      setDirty(false);
+      allowRemoval();
+      router.dismissTo(path);
+    } catch {
+      setStorageError(
+        "Could not save your draft before leaving. Please try again.",
+      );
+    } finally {
+      routing.current = false;
+    }
+  }
+
+  const columnWidth = Math.max(insets.left, insets.right);
   return (
-    <Screen>
-      <Stack.Screen
-        options={{
-          title,
-          headerRight: () =>
-            state.step === "intent" ? null : (
-              <View
-                style={{ flexDirection: "row", alignItems: "center", gap: 2 }}
-              >
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Appearance"
-                  disabled={busy}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/settings/[section]",
-                      params: { section: "appearance" },
-                    })
-                  }
-                  style={{
-                    width: 44,
-                    height: 44,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <SocialIcon name="settings" />
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    state.step === "preview"
-                      ? "Publish from header"
-                      : state.step === "product"
-                        ? "Continue creation"
-                        : "Preview content"
-                  }
-                  disabled={
-                    busy ||
-                    (state.step === "preview" ? !publishAvailable : locked)
-                  }
-                  onPress={() =>
-                    state.step === "preview"
-                      ? void publish()
-                      : state.step === "product"
-                        ? nextProduct()
-                        : preview()
-                  }
-                  style={{
-                    minHeight: 44,
-                    paddingHorizontal: 10,
-                    justifyContent: "center",
-                    opacity: busy || locked ? 0.5 : 1,
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: colors.accentInk,
-                      fontWeight: "700",
-                      fontSize: 14,
-                    }}
-                  >
-                    {busy
-                      ? "Saving..."
-                      : state.step === "preview"
-                        ? "Publish"
-                        : state.step === "product"
-                          ? "Continue"
-                          : "Preview"}
-                  </Text>
-                </Pressable>
-              </View>
-            ),
-          headerLeft: () => (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Back"
-              onPress={back}
-              disabled={busy}
-              style={{ padding: 10 }}
-            >
-              <View style={{ transform: [{ rotate: "180deg" }] }}>
-                <SocialIcon name="arrow" />
-              </View>
-            </Pressable>
-          ),
-        }}
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: tokens.page,
+        paddingTop: insets.top,
+        paddingHorizontal: columnWidth,
+      }}
+    >
+      <FloatingHeader
+        creation
+        center={<BrandLogo size={34} />}
+        leading={
+          <CreationIconButton
+            label="Back"
+            icon="back"
+            disabled={isPublishing}
+            onPress={() => exit(false)}
+          />
+        }
+        trailing={
+          <CreationIconButton
+            label="Close creation"
+            icon="close"
+            disabled={isPublishing}
+            onPress={() => exit(true)}
+          />
+        }
       />
-      <Text style={type.small}>
-        {post
-          ? "Photos → Caption → Preview"
-          : "Product → Poll or Compare → Details → Preview"}
-      </Text>
-      {note ? <Text style={type.small}>{note}</Text> : null}
-      {error ? <Banner kind="error">{error}</Banner> : null}
-      {!ready ? (
-        <Text style={type.body}>Restoring draft...</Text>
-      ) : (
-        <>
-          {state.step === "product" ? (
+      <ScrollView
+        testID="create-scroll"
+        style={{
+          flex: 1,
+          marginBottom: keyboardOpen
+            ? 0
+            : floatingDockHeight(insets.bottom) - 4,
+        }}
+        contentContainerStyle={{
+          paddingHorizontal: 16,
+          paddingBottom: 16,
+        }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View
+          style={{
+            width: "100%",
+            maxWidth: 480,
+            gap: 14,
+            alignSelf: "center",
+            paddingTop: 6,
+          }}
+        >
+          <View style={{ gap: 2 }}>
+            <Text accessibilityRole="header" style={type.title}>
+              Is it really worth it?
+            </Text>
+            <Text style={[type.small, { color: tokens.secondary }]}>
+              Find it. Share it. Decide together.
+            </Text>
+          </View>
+
+          {storageError ? <Banner kind="info">{storageError}</Banner> : null}
+          {editingReady ? (
             <>
-              {state.editing > 0 ? (
-                <CreationSurface style={{ padding: 14 }}>
-                  <Text style={type.small}>Already selected</Text>
-                  <Text style={type.h2}>{state.products[0].name}</Text>
-                </CreationSurface>
-              ) : null}
               <ProductEditor
-                key={current.id}
-                product={current}
+                key={first.id}
+                product={first}
                 media={media}
-                setMedia={setMedia}
-                disabled={busy || locked}
-                post={post}
-                update={(fn) =>
-                  setState((s) => ({
-                    ...s,
-                    products: s.products.map((p) =>
-                      p.id === current.id ? fn(p) : p,
-                    ),
-                  }))
-                }
+                update={updateProduct(0)}
+                disabled={disabled}
+                allowInitialVideo={entry === "post"}
               />
-              <Button label="Continue" disabled={busy} onPress={nextProduct} />
-            </>
-          ) : null}
-          {state.step === "intent" ? (
-            <>
-              <CreationSurface style={{ padding: 16 }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 14,
-                    alignItems: "center",
-                  }}
-                >
-                  {mock.imageUrl ? (
-                    <Image
-                      source={{ uri: mock.imageUrl }}
-                      style={{ width: 64, height: 80, borderRadius: 12 }}
-                      resizeMode="cover"
-                    />
-                  ) : null}
-                  <View style={{ flex: 1, gap: 6 }}>
-                    <Text style={type.h2}>{state.products[0].name}</Text>
-                    <Text style={type.small}>
-                      {[
-                        state.products[0].fields.brand,
-                        state.products[0].fields.currency,
-                        state.products[0].fields.price,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </Text>
-                  </View>
-                </View>
-              </CreationSurface>
-              {[
-                {
-                  subtype: "opinion",
-                  title: "Poll — Worth It?",
-                  subtitle: "Ask if this product is worth buying.",
-                  icon: "feed",
-                },
-                {
-                  subtype: "compare",
-                  title: "Compare",
-                  subtitle: "Compare it with another product.",
-                  icon: "grid",
-                },
-              ].map((option) => (
-                <CreationSurface
-                  key={option.subtype}
-                  style={{
-                    borderWidth: state.subtype === option.subtype ? 1 : 0,
-                    borderColor: colors.accentInk,
-                  }}
-                >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={option.title}
-                    disabled={busy}
-                    onPress={() => {
-                      setError("");
-                      setQuestion(
-                        option.subtype === "compare"
-                          ? "Which one should I buy?"
-                          : "Is this worth buying?",
-                      );
-                      setState((s) => ({
-                        ...s,
-                        subtype: option.subtype as "opinion" | "compare",
-                        intentChosen: true,
-                        products:
-                          option.subtype === "compare" && s.products.length < 2
-                            ? [...s.products, makeProduct()]
-                            : s.products,
-                        editing: option.subtype === "compare" ? 1 : 0,
-                        step:
-                          option.subtype === "compare" && s.products.length < 2
-                            ? "product"
-                            : "edit",
-                      }));
-                    }}
-                    style={{ padding: 22, gap: 10 }}
-                  >
-                    <SocialIcon name={option.icon as "feed" | "grid"} />
-                    <Text style={type.h2}>{option.title}</Text>
-                    <Text style={type.small}>{option.subtitle}</Text>
-                  </Pressable>
-                </CreationSurface>
-              ))}
-            </>
-          ) : null}
-          {state.step === "edit" ? (
-            <>
-              {post ? (
-                <>
-                  <CreationBody
-                    poll={{
-                      ...mock,
-                      creationSpec: {
-                        version: 1,
-                        subtype: "post",
-                        products: [],
-                        options: [],
-                      },
-                      question: "",
-                    }}
-                    preview
-                  />
-                  <Field
-                    label="Caption"
-                    placeholder="Tell us about your look..."
-                    value={question}
-                    onChangeText={setQuestion}
-                    multiline
-                    maxLength={2000}
-                    editable={!busy && !locked}
-                  />
-                </>
-              ) : (
-                <>
-                  <Field
-                    label={
-                      state.subtype === "compare"
-                        ? "Comparison question"
-                        : "Poll question"
-                    }
-                    value={question}
-                    onChangeText={setQuestion}
-                    maxLength={200}
-                    editable={!busy && !locked}
-                  />
-                  <View
-                    style={{ flexDirection: "row", flexWrap: "wrap", gap: 10 }}
-                  >
-                    {activeProducts.map((p, i) => (
-                      <CreationSurface
-                        key={p.id}
-                        style={{
-                          flexBasis:
-                            state.subtype === "compare" ? "45%" : "100%",
-                          flexGrow: 1,
-                          padding: 14,
-                          gap: 8,
-                        }}
-                      >
-                        <DraftProductCover product={p} media={media} />
-                        <Text style={type.h2}>{p.name || "Add product"}</Text>
-                        {p.fields.brand ? (
-                          <Text style={type.small}>{p.fields.brand}</Text>
-                        ) : null}
-                        {p.fields.price ? (
-                          <Text style={type.small}>
-                            {p.fields.currency ? p.fields.currency + " " : ""}
-                            {p.fields.price}
-                            {!p.fields.currency ? " · currency unknown" : ""}
-                          </Text>
-                        ) : null}
-                        <Button
-                          variant="secondary"
-                          label={"Edit product " + (i + 1)}
-                          disabled={locked}
-                          onPress={() =>
-                            setState((s) => ({
-                              ...s,
-                              step: "product",
-                              editing: i,
-                            }))
-                          }
-                        />
-                        {state.subtype === "compare" &&
-                        activeProducts.length > 1 ? (
-                          <Button
-                            variant="quiet"
-                            label={"Remove product " + (i + 1)}
-                            disabled={locked}
-                            onPress={() => {
-                              setState((s) => ({
+              {hasPreview ? (
+                <View style={{ gap: 8 }}>
+                  <Text accessibilityRole="header" style={type.h2}>
+                    What would you like to create?
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    {actions.map((action) => {
+                      const active = action.type === selected?.type;
+                      return (
+                        <ThemeSurface
+                          key={action.type}
+                          creation
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            borderRadius: 14,
+                            borderWidth: 1,
+                            backgroundColor: tokens.card,
+                            borderColor: tokens.border,
+                          }}
+                        >
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={action.title}
+                            accessibilityState={{ selected: active }}
+                            aria-pressed={active}
+                            disabled={disabled}
+                            onPress={() =>
+                              updateDraft((s) => ({
                                 ...s,
-                                products: s.products.filter(
-                                  (v) => v.id !== p.id,
-                                ),
-                              }));
-                              setMedia((old) =>
-                                old.filter((m) => !p.mediaIds.includes(m.id)),
-                              );
-                            }}
-                          />
-                        ) : null}
-                      </CreationSurface>
-                    ))}
-                  </View>
-                  {state.subtype === "compare" ? (
-                    <Button
-                      label="Add another product"
-                      variant="secondary"
-                      disabled={activeProducts.length >= 4 || locked}
-                      onPress={() =>
-                        setState((s) => ({
-                          ...s,
-                          products: [...s.products, makeProduct()],
-                          editing: s.products.length,
-                          step: "product",
-                        }))
-                      }
-                    />
-                  ) : (
-                    <CreationSurface style={{ padding: 16, gap: 10 }}>
-                      <Text style={type.h2}>Voting options</Text>
-                      {state.options.map((o, index) => (
-                        <View key={o.id} style={{ gap: 5 }}>
-                          <Field
-                            label={"Option " + (index + 1)}
-                            value={o.label}
-                            maxLength={80}
-                            editable={!locked}
-                            onChangeText={(label) =>
-                              setState((s) => ({
-                                ...s,
-                                options: s.options.map((v) =>
-                                  v.id === o.id ? { ...v, label } : v,
-                                ),
+                                subtype: action.type,
+                                intentChosen: true,
                               }))
                             }
-                          />
+                            style={({ pressed }) => [
+                              styles.action,
+                              { opacity: pressed ? 0.7 : 1 },
+                              active && {
+                                backgroundColor: colors.accentSoft,
+                                borderColor: colors.accentInk,
+                              },
+                            ]}
+                          >
+                            <SocialIcon
+                              name={action.icon}
+                              color={colors.accentInk}
+                              size={21}
+                            />
+                            <Text
+                              style={{
+                                color: colors.ink,
+                                fontSize: 14,
+                                fontWeight: "700",
+                              }}
+                            >
+                              {action.title}
+                            </Text>
+                            <Text
+                              style={{
+                                color: tokens.secondary,
+                                fontSize: 11,
+                                lineHeight: 15,
+                                textAlign: "center",
+                              }}
+                            >
+                              {action.subtitle}
+                            </Text>
+                          </Pressable>
+                        </ThemeSurface>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+              <ProductEditor
+                key={second.id}
+                product={second}
+                media={media}
+                update={updateProduct(1)}
+                visible={comparing}
+                disabled={disabled}
+                comparison
+                comparisonWith={first}
+              />
+              {comparing
+                ? state.products
+                    .slice(2)
+                    .map((product, i) => (
+                      <ProductEditor
+                        key={product.id}
+                        product={product}
+                        media={media}
+                        update={updateProduct(i + 2)}
+                        disabled={disabled}
+                      />
+                    ))
+                : null}
+              {selected ? (
+                <ThemeSurface
+                  creation
+                  style={{
+                    backgroundColor: tokens.card,
+                    borderColor: tokens.border,
+                    borderWidth: 1,
+                    borderRadius: 16,
+                    padding: 14,
+                    gap: 10,
+                  }}
+                >
+                  <Field
+                    label={
+                      posting
+                        ? "Caption"
+                        : comparing
+                          ? "Comparison question"
+                          : "Poll question"
+                    }
+                    multiline={posting}
+                    placeholder={
+                      posting ? "What makes this worth sharing?" : undefined
+                    }
+                    maxLength={posting ? 2000 : 200}
+                    value={question}
+                    editable={!disabled}
+                    onChangeText={(text) =>
+                      updateDraft((s) => ({
+                        ...s,
+                        questions: { ...s.questions, [s.subtype]: text },
+                      }))
+                    }
+                  />
+                  {selected.type === "opinion" ? (
+                    <>
+                      {state.options.map((option, index) => (
+                        <View
+                          key={option.id}
+                          style={{
+                            flexDirection: "row",
+                            alignItems: "flex-end",
+                            gap: 4,
+                          }}
+                        >
+                          <View style={{ flex: 1 }}>
+                            <Field
+                              label={"Option " + (index + 1)}
+                              value={option.label}
+                              maxLength={80}
+                              editable={!disabled}
+                              onChangeText={(label) =>
+                                updateDraft((s) => ({
+                                  ...s,
+                                  options: s.options.map((o) =>
+                                    o.id === option.id ? { ...o, label } : o,
+                                  ),
+                                }))
+                              }
+                            />
+                          </View>
                           {state.options.length > 2 ? (
-                            <Button
-                              variant="quiet"
+                            <CreationIconButton
                               label={"Remove option " + (index + 1)}
-                              disabled={locked}
+                              icon="close"
+                              disabled={disabled}
                               onPress={() =>
-                                setState((s) => ({
+                                updateDraft((s) => ({
                                   ...s,
                                   options: s.options.filter(
-                                    (v) => v.id !== o.id,
+                                    (o) => o.id !== option.id,
                                   ),
                                 }))
                               }
@@ -784,199 +824,157 @@ function Workspace({ kind }: { kind: "poll" | "post" }) {
                           ) : null}
                         </View>
                       ))}
-                      <Button
-                        variant="secondary"
-                        label="Add option"
-                        disabled={state.options.length >= 4 || locked}
-                        onPress={() =>
-                          setState((s) => ({
-                            ...s,
-                            options: [
-                              ...s.options,
-                              { id: randomUUID(), label: "" },
-                            ],
-                          }))
-                        }
-                      />
-                    </CreationSurface>
-                  )}
-                  <Field
-                    label="Short description (optional)"
-                    value={state.description}
-                    onChangeText={(description) =>
-                      setState((s) => ({ ...s, description }))
-                    }
-                    maxLength={500}
-                    multiline
-                    editable={!locked}
-                  />
-                </>
-              )}
-              <Button
-                label={more ? "Hide More Options" : "More Options"}
-                variant="quiet"
-                onPress={() => setMore(!more)}
-              />
-              {more ? (
-                <CreationSurface style={{ padding: 16, gap: 16 }}>
-                  {post ? (
-                    <Field
-                      label="Location (optional)"
-                      value={state.location}
-                      maxLength={120}
-                      editable={!locked}
-                      onChangeText={(location) =>
-                        setState((s) => ({ ...s, location }))
-                      }
-                    />
-                  ) : null}
-                  {post ? (
-                    <Field
-                      label="Product link (optional)"
-                      value={state.products[0].url}
-                      maxLength={2048}
-                      autoCapitalize="none"
-                      editable={!locked}
-                      onChangeText={(url) =>
-                        setState((s) => ({
-                          ...s,
-                          products: [{ ...s.products[0], url }],
-                        }))
-                      }
-                    />
-                  ) : null}
-                  {!post ? (
-                    <>
-                      <Field
-                        label="What will you use it for? (optional)"
-                        placeholder="Work calls, daily walks..."
-                        value={useCase}
-                        onChangeText={setUseCase}
-                        maxLength={120}
-                        editable={!locked}
-                      />
-                      <Field
-                        label="What matters most? (optional)"
-                        value={priority}
-                        onChangeText={setPriority}
-                        maxLength={120}
-                        editable={!locked}
-                      />
-                      <Field
-                        label="Your budget (INR, optional)"
-                        value={budget}
-                        onChangeText={setBudget}
-                        inputMode="numeric"
-                        editable={!locked}
-                      />
+                      {state.options.length < 4 ? (
+                        <Button
+                          label="Add option"
+                          variant="quiet"
+                          disabled={disabled}
+                          onPress={() => {
+                            const id = randomUUID();
+                            updateDraft((s) => ({
+                              ...s,
+                              options: [...s.options, { id, label: "" }],
+                            }));
+                          }}
+                          style={{ alignSelf: "flex-start" }}
+                        />
+                      ) : null}
                     </>
                   ) : null}
-                  <PollCategories
-                    value={category}
-                    onChange={(c) => setCategory(c ?? undefined)}
-                  />
-                  {post ? (
+                  {posting ? (
+                    <PostAttachments
+                      media={media}
+                      mediaIds={state.postMediaIds ?? []}
+                      coverCount={first.mediaIds.length}
+                      onChange={updatePostMedia}
+                      disabled={disabled}
+                    />
+                  ) : null}
+                  {error ? <Banner kind="error">{error}</Banner> : null}
+                  {!publishAvailable ? (
                     <Text style={type.small}>
-                      Add hashtags in your caption. Product links are optional;
-                      use a shopping Poll to attach independent product details.
+                      Publishing is unavailable. Your draft is kept.
                     </Text>
                   ) : null}
-                </CreationSurface>
+                  {state.publishLocked && !isPublishing ? (
+                    <Text style={type.small}>
+                      Retry to check the status of this publication.
+                    </Text>
+                  ) : null}
+                  <Button
+                    label={selected.publish}
+                    disabled={!publishAvailable}
+                    loading={isPublishing}
+                    onPress={() => void publish()}
+                  />
+                </ThemeSurface>
               ) : null}
-              <Button label="Preview" onPress={preview} disabled={locked} />
             </>
-          ) : null}
-          {state.step === "preview" ? (
-            <>
-              <CreationSurface
-                frost={false}
-                style={{ gap: 14, paddingBottom: 16 }}
-              >
-                <PostIdentity poll={mock} mine={true} />
-                <CreationBody
-                  poll={mock}
-                  preview
-                  storeFacts={Object.fromEntries(
-                    activeProducts
-                      .filter(
-                        (p) =>
-                          p.intelligence &&
-                          p.resolvedUrl === detectProductUrl(p.url),
-                      )
-                      .map((p) => [
-                        p.id,
-                        { value: p.intelligence!, manual: p.manual || [] },
-                      ]),
-                  )}
-                />
-                <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 18,
-                    paddingHorizontal: 16,
-                  }}
-                >
-                  <Text style={type.small}>☆ 0 Stars</Text>
-                  <Text style={type.small}>Comments</Text>
-                  <Text style={type.small}>Save</Text>
-                </View>
-              </CreationSurface>
-              <Text style={type.small}>
-                Preview · interactions become available after publishing.
+          ) : (
+            <Text accessibilityLiveRegion="polite" style={type.small}>
+              Restoring draft…
+            </Text>
+          )}
+        </View>
+      </ScrollView>
+      {!keyboardOpen ? (
+        <AppTabs
+          active="add"
+          creation
+          onNavigate={(path) => void goTo(path)}
+          safeAreaSides={false}
+        />
+      ) : null}
+      {leaving ? (
+        <Modal
+          visible
+          transparent
+          animationType="none"
+          onRequestClose={() => setLeaving(null)}
+        >
+          <View
+            style={[
+              styles.dialogBackdrop,
+              glossy && { backgroundColor: glossy.scrim },
+            ]}
+          >
+            <ThemeSurface
+              creation
+              frost
+              material="sheet"
+              accessibilityViewIsModal
+              style={{
+                margin: 16,
+                width: "90%",
+                maxWidth: 380,
+                padding: 18,
+                gap: 12,
+                backgroundColor: tokens.card,
+              }}
+            >
+              <Text accessibilityRole="header" style={type.h2}>
+                Discard this draft?
               </Text>
-              {progress ? (
-                <Text style={type.small}>
-                  {progress.stage} · {progress.completed}/{progress.total}
-                </Text>
-              ) : null}
-              {locked ? (
-                <Banner kind="info">
-                  Retry checks this same publication. Your content is kept
-                  unchanged until its result is confirmed.
-                </Banner>
-              ) : (
-                <Button
-                  label="Back to editing"
-                  variant="secondary"
-                  disabled={busy}
-                  onPress={() => setState((s) => ({ ...s, step: "edit" }))}
-                />
-              )}
-              {!publishAvailable ? (
-                <Banner kind="info">
-                  Connected publishing needs the creation database update. Your
-                  draft stays saved on this device.
-                </Banner>
-              ) : null}
-              <Button
-                disabled={!publishAvailable}
-                label={
-                  post
-                    ? "Publish Post"
-                    : state.subtype === "compare"
-                      ? "Publish Comparison"
-                      : "Publish Poll"
-                }
-                loading={busy}
-                onPress={() => {
-                  void publish();
+              <Text style={type.small}>
+                Your product and changes will be removed.
+              </Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "flex-end",
+                  gap: 8,
                 }}
-              />
-              {busy && progress?.stage !== "publishing" ? (
+              >
                 <Button
-                  label="Pause upload"
+                  label="Keep editing"
                   variant="quiet"
-                  onPress={() => controller.current?.abort()}
+                  onPress={() => setLeaving(null)}
                 />
-              ) : null}
-            </>
-          ) : null}
-        </>
-      )}
-    </Screen>
+                <Button label="Discard" onPress={() => void discard()} />
+              </View>
+            </ThemeSurface>
+          </View>
+        </Modal>
+      ) : null}
+    </View>
   );
 }
-export function ContentComposer({ kind }: { kind: "poll" | "post" }) {
+
+export function ContentComposer({ kind = "create" }: { kind?: Entry }) {
   const { session } = useApp();
-  return <Workspace key={kind + session.userId} kind={kind} />;
+  const { sharedProductUrl } = useLocalSearchParams<{
+    sharedProductUrl?: string;
+  }>();
+  const url =
+    kind === "create" && typeof sharedProductUrl === "string"
+      ? readSharedProductUrl([{ value: sharedProductUrl }])
+      : null;
+  return (
+    <Workspace
+      key={kind + session.userId + (url ? ":shared" : "")}
+      entry={kind}
+      sharedProductUrl={url}
+    />
+  );
 }
+
+const styles = StyleSheet.create({
+  action: {
+    minHeight: 83,
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 2,
+    paddingHorizontal: 3,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: "transparent",
+    borderRadius: 13,
+  },
+  dialogBackdrop: {
+    flex: 1,
+    backgroundColor: "#00000080",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+});

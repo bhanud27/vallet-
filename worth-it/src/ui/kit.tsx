@@ -20,6 +20,7 @@ import {
 import { Poll } from "../lib/types";
 import { formatProductPrice } from "../lib/productPrice";
 import { DEMO_IMAGES } from "./demoImages";
+import { GlossyReflection } from "./ThemeSurface";
 import { themedStyles, useTheme } from "./theme";
 
 export function Screen({
@@ -75,7 +76,7 @@ export function Button({
   style,
   testID,
 }: BtnProps) {
-  const { colors } = useTheme();
+  const { colors, glossy } = useTheme();
   const s = useKitStyles();
 
   const off = disabled || loading;
@@ -85,7 +86,12 @@ export function Button({
       : variant === "secondary"
         ? colors.surface
         : "transparent";
-  const fg = variant === "primary" ? colors.onAccent : colors.ink;
+  const fg =
+    glossy && disabled && !loading
+      ? colors.muted
+      : variant === "primary"
+        ? colors.onAccent
+        : colors.ink;
   return (
     <Pressable
       testID={testID}
@@ -97,14 +103,29 @@ export function Button({
       onPress={off ? undefined : onPress}
       style={({ pressed }) => [
         s.btn,
-        { backgroundColor: bg, opacity: off ? 0.5 : pressed ? 0.85 : 1 },
+        {
+          backgroundColor:
+            glossy && disabled && !loading && variant !== "quiet"
+              ? glossy.elevated
+              : bg,
+          opacity: off && !glossy ? 0.5 : pressed ? 0.85 : 1,
+        },
         variant === "secondary" && {
           borderWidth: 1,
           borderColor: colors.border,
         },
+        glossy && { overflow: "hidden" },
+        glossy &&
+          disabled &&
+          !loading &&
+          variant !== "quiet" && {
+            borderWidth: 1,
+            borderColor: glossy.disabled,
+          },
         style,
       ]}
     >
+      {glossy && variant !== "quiet" ? <GlossyReflection /> : null}
       {loading ? <ActivityIndicator color={fg} /> : null}
       <Text style={[s.btnText, { color: fg }]}>{label}</Text>
     </Pressable>
@@ -257,19 +278,24 @@ export function PriceTag({
   price: number;
   label?: string;
   currency?: string | null;
-  size?: "large" | "small";
+  size?: "large" | "small" | "inline";
 }) {
   const { colors } = useTheme();
   const s = useKitStyles();
 
   const big = size === "large";
+  const inline = size === "inline";
   return (
     <View
       style={[
         s.tag,
         big
           ? { paddingVertical: 8, paddingLeft: 30, paddingRight: 16 }
-          : { paddingVertical: 4, paddingLeft: 22, paddingRight: 10 },
+          : {
+              paddingVertical: inline ? 3 : 4,
+              paddingLeft: inline ? 18 : 22,
+              paddingRight: inline ? 8 : 10,
+            },
       ]}
       accessible
       accessibilityLabel={`${label} price ${formatProductPrice(price, currency)}`}
@@ -282,25 +308,30 @@ export function PriceTag({
             : { left: 8, top: "50%", marginTop: -4, width: 8, height: 8 },
         ]}
       />
+      {!inline ? (
+        <Text
+          style={{
+            fontSize: big ? 11 : 10,
+            color: colors.tagInk,
+            fontWeight: "700",
+          }}
+        >
+          {label}
+        </Text>
+      ) : null}
       <Text
         style={{
-          fontSize: big ? 11 : 10,
-          color: colors.tagInk,
-          fontWeight: "700",
-        }}
-      >
-        {label}
-      </Text>
-      <Text
-        style={{
-          fontSize: big ? 28 : 17,
+          fontSize: big ? 28 : inline ? 15 : 17,
+          lineHeight: inline ? 18 : undefined,
           fontWeight: "900",
           color: colors.tagInk,
           fontVariant: ["tabular-nums"],
           letterSpacing: -0.5,
         }}
       >
-        {formatProductPrice(price, currency)}
+        {inline && !currency
+          ? price.toLocaleString("en-IN", { maximumFractionDigits: 2 })
+          : formatProductPrice(price, currency)}
       </Text>
     </View>
   );
@@ -361,7 +392,7 @@ export function Centered({ children }: { children: ReactNode }) {
   );
 }
 
-const useKitStyles = themedStyles(({ colors }) =>
+const useKitStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
     screenContent: { padding: 16, paddingBottom: 48, alignItems: "center" },
     column: { width: "100%", maxWidth: 560, gap: 16 },
@@ -387,7 +418,7 @@ const useKitStyles = themedStyles(({ colors }) =>
     input: {
       borderWidth: 1.5,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
+      backgroundColor: glossy?.secondary ?? colors.surface,
       borderRadius: 12,
       paddingHorizontal: 14,
       paddingVertical: 12,
@@ -404,6 +435,7 @@ const useKitStyles = themedStyles(({ colors }) =>
     },
     tag: {
       backgroundColor: colors.tag,
+      maxWidth: "100%",
       borderRadius: 10,
       alignSelf: "flex-start",
       justifyContent: "center",

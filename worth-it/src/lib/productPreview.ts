@@ -3,6 +3,14 @@ import { productPreviewOrigin } from "./productPreviewOrigin";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { MAX_POLL_MEDIA } from "./types";
+
+export class ProductPreviewError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "ProductPreviewError";
+  }
+}
+
 export interface ProductImage {
   mimeType: "image/jpeg" | "image/png" | "image/webp";
   base64: string;
@@ -11,7 +19,12 @@ export interface ProductIntelligence {
   schema_version: 2;
   status: "success" | "partial" | "restricted" | "failed" | "unsupported";
   code: string | null;
-  source: { retailer: string; original_url: string; canonical_url: string };
+  source: {
+    retailer: string;
+    original_url: string;
+    canonical_url: string;
+    site_name?: string;
+  };
   product: {
     title: string | null;
     brand: string | null;
@@ -67,17 +80,22 @@ export interface ProductPreview {
   images: ProductImage[];
   intelligence?: ProductIntelligence;
   imagesPending?: boolean;
+  originalPrice?: number;
   limited?: boolean;
   warning?: string;
 }
 function previewOrigin() {
-  return productPreviewOrigin(
-    process.env.EXPO_PUBLIC_PRODUCT_IMPORT_URL,
-    __DEV__,
-    Platform.OS,
-    Constants.expoConfig?.hostUri,
-    typeof window === "undefined" ? undefined : window.location.origin,
-  );
+  try {
+    return productPreviewOrigin(
+      process.env.EXPO_PUBLIC_PRODUCT_IMPORT_URL,
+      __DEV__,
+      Platform.OS,
+      Constants.expoConfig?.hostUri,
+      Platform.OS === "web" ? globalThis.location?.origin : undefined,
+    );
+  } catch {
+    throw new ProductPreviewError("IMPORTER_NOT_CONFIGURED");
+  }
 }
 
 export function productPhoto(image: ProductImage) {
@@ -89,21 +107,73 @@ export function productPhoto(image: ProductImage) {
 const clonePreview = (value: ProductPreview): ProductPreview =>
   JSON.parse(JSON.stringify(value));
 const cached = new Map<string, { until: number; value: ProductPreview }>();
+type PreviewMode = "rich" | "enrichment" | "enriched-preview" | "full";
+const pending = new Map<
+  string,
+  {
+    controller: AbortController;
+    promise: Promise<ProductPreview>;
+    callers: number;
+  }
+>();
+
 export async function getProductPreview(
   url: string,
   signal: AbortSignal,
   refresh = false,
-  detailsOnly = false,
+  mode: PreviewMode = "full",
+): Promise<ProductPreview> {
+  signal.throwIfAborted();
+  const key = url + "|" + mode;
+  let request = pending.get(key);
+  if (!request) {
+    const controller = new AbortController();
+    const promise = fetchProductPreview(url, controller.signal, refresh, mode);
+    request = { controller, promise, callers: 0 };
+    const work = request;
+    pending.set(key, work);
+    const clean = () => {
+      if (pending.get(key) === work) pending.delete(key);
+    };
+    void promise.then(clean, clean);
+  }
+
+  const work = request;
+  work.callers++;
+  try {
+    return await new Promise<ProductPreview>((resolve, reject) => {
+      const cancel = () => reject(signal.reason);
+      signal.addEventListener("abort", cancel, { once: true });
+      void work.promise.then(
+        (value) => {
+          signal.removeEventListener("abort", cancel);
+          resolve(value);
+        },
+        (error) => {
+          signal.removeEventListener("abort", cancel);
+          reject(error);
+        },
+      );
+    });
+  } finally {
+    if (--work.callers === 0 && pending.get(key) === work) {
+      pending.delete(key);
+      work.controller.abort();
+    }
+  }
+}
+async function fetchProductPreview(
+  url: string,
+  signal: AbortSignal,
+  refresh: boolean,
+  mode: PreviewMode,
 ): Promise<ProductPreview> {
   const origin = previewOrigin();
-  if (!origin)
-    throw new Error(
-      "Automatic previews are unavailable here. Add details and photos manually.",
-    );
+  if (!origin) throw new ProductPreviewError("IMPORTER_NOT_CONFIGURED");
   if (refresh)
     for (const entry of cached.keys())
       if (entry.startsWith(origin + "|" + url + "|")) cached.delete(entry);
-  const key = origin + "|" + url + (detailsOnly ? "|details" : "|full"),
+  const key = origin + "|" + url + "|" + mode,
     hit = cached.get(key);
   if (signal.aborted) throw new Error("Preview request cancelled.");
   if (!refresh && hit && hit.until > Date.now()) return clonePreview(hit.value);
@@ -117,13 +187,25 @@ export async function getProductPreview(
       "Content-Type": "application/json",
       ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
     },
-    body: JSON.stringify({ url, refresh, detailsOnly }),
+    body: JSON.stringify({
+      url,
+      refresh,
+      detailsOnly: mode === "enrichment",
+      mode,
+    }),
     signal,
+  }).catch((error) => {
+    if (signal.aborted) throw error;
+    throw new ProductPreviewError("IMPORTER_UNAVAILABLE");
   });
-  const body = await response.json().catch(() => ({}));
+  const body = await response.json().catch(() => null);
+  if (response.status === 401) throw new ProductPreviewError("AUTH_REQUIRED");
+  if (response.status === 429) throw new ProductPreviewError("RATE_LIMITED");
+  if (!body || response.status >= 500)
+    throw new ProductPreviewError("IMPORTER_UNAVAILABLE");
   if (!response.ok || !Array.isArray(body.images))
-    throw new Error(
-      body.error || "The store did not provide a product preview.",
+    throw new ProductPreviewError(
+      typeof body.code === "string" ? body.code : "EXTRACTION_FAILED",
     );
   let bytes = 0;
   const images: ProductImage[] = body.images
@@ -172,6 +254,12 @@ export async function getProductPreview(
           }
         : undefined,
     imagesPending: body.imagesPending === true,
+    originalPrice:
+      typeof body.originalPrice === "number" &&
+      body.originalPrice > 0 &&
+      body.originalPrice <= 10000000
+        ? body.originalPrice
+        : undefined,
     limited: !!body.limited,
     warning: text("warning", 300) || undefined,
   };
@@ -186,8 +274,8 @@ export async function getProductPreview(
     throw new Error(
       "This store did not share a product preview. Add details and photos manually.",
     );
-  // Keep only two image-bearing previews (the backend also has a bounded cache).
-  if (cached.size >= 2) cached.delete(cached.keys().next().value!);
+  // Keep a bounded cache for both comparison slots and their metadata.
+  if (cached.size >= 4) cached.delete(cached.keys().next().value!);
   cached.set(key, {
     until: Math.min(
       Date.now() +

@@ -1,6 +1,7 @@
 const { Buffer } = require("node:buffer");
 // Trusted server-side extension point. No vendor, paid endpoint or credentials enabled by default.
 const { resolve } = require("node:path");
+const { configuredSerpApi } = require("./product-serpapi.cjs");
 function createFallbacks(config = {}) {
   const providers = [...(config.providers || [])].sort(
     (a, b) =>
@@ -8,8 +9,11 @@ function createFallbacks(config = {}) {
   );
   const usage = new Map();
   return async ({ url, retailer, signal, restricted, browser }) => {
-    const failures = [];
+    const failures = providers.length
+      ? []
+      : [{ code: "PROVIDER_NOT_CONFIGURED" }];
     for (const p of providers) {
+      if (signal.aborted) break;
       if (
         !p.name ||
         typeof p.extract !== "function" ||
@@ -24,7 +28,10 @@ function createFallbacks(config = {}) {
         current.count = 0;
         current.until = Date.now() + 60000;
       }
-      if (current.count >= Math.min(60, p.requestsPerMinute || 6)) continue;
+      if (current.count >= Math.min(60, p.requestsPerMinute || 6)) {
+        failures.push({ provider: p.name, code: "PROVIDER_RATE_LIMITED" });
+        continue;
+      }
       current.count++;
       usage.set(p.name, current);
       const deadline = AbortSignal.any([
@@ -48,7 +55,10 @@ function createFallbacks(config = {}) {
           result.url === url
         )
           return { ...result, method: "authorized_provider", failures };
-        failures.push({ provider: p.name, code: "PROVIDER_ERROR" });
+        failures.push({
+          provider: p.name,
+          code: result == null ? "PROVIDER_NO_EXACT_MATCH" : "PROVIDER_ERROR",
+        });
       } catch {
         failures.push({ provider: p.name, code: "PROVIDER_ERROR" });
       }
@@ -62,12 +72,14 @@ function createFallbacks(config = {}) {
         failures.push({ code: "BROWSER_UNAVAILABLE" });
       }
     }
+    if (!failures.length) failures.push({ code: "PROVIDER_UNAVAILABLE" });
     return { failures };
   };
 }
 function configuredProviders() {
   const path = process.env.PRODUCT_PROVIDER_MODULE;
-  if (!path) return [];
+  const serpapi = configuredSerpApi();
+  if (!path) return serpapi ? [serpapi] : [];
   if (!require("node:path").isAbsolute(path))
     throw new Error(
       "PRODUCT_PROVIDER_MODULE must be an absolute trusted server module path",
@@ -75,6 +87,6 @@ function configuredProviders() {
   const providers = require(resolve(path));
   if (!Array.isArray(providers))
     throw new Error("Provider module must export an array");
-  return providers;
+  return serpapi ? [...providers, serpapi] : providers;
 }
 module.exports = { createFallbacks, configuredProviders };

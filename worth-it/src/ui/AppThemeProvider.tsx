@@ -16,7 +16,12 @@ import React, {
 } from "react";
 import { Appearance, Platform, View, useColorScheme } from "react-native";
 import { isColorMode, type ColorMode } from "../lib/colorTheme";
-import { ThemeContext, createTheme, type AppearanceStyle } from "./theme";
+import {
+  ThemeContext,
+  createTheme,
+  isAppearanceStyle,
+  type AppearanceStyle,
+} from "./theme";
 import { ThemeBackdrop } from "./ThemeBackdrop";
 import { useReducedEffects } from "./useReducedEffects";
 export type { AppearanceStyle } from "./theme";
@@ -42,7 +47,7 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
     [ready, setReady] = useState(false);
   const [appearance, setAppearanceState] = useState<AppearanceStyle>("normal");
   const system = useColorScheme(),
-    mode =
+    preferredMode =
       preference === "system"
         ? system === "dark"
           ? "dark"
@@ -50,10 +55,10 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
         : preference,
     reducedEffects = useReducedEffects(),
     theme = useMemo(
-      () => createTheme(mode, appearance, reducedEffects),
-      [mode, appearance, reducedEffects],
+      () => createTheme(preferredMode, appearance, reducedEffects),
+      [preferredMode, appearance, reducedEffects],
     ),
-    colors = theme.colors;
+    { mode, colors, glossy } = theme;
   useEffect(() => {
     let active = true;
     void Promise.all([
@@ -61,8 +66,7 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
       AsyncStorage.getItem(APPEARANCE_KEY),
     ])
       .then(([value, style]) => {
-        if (active && (style === "normal" || style === "glass"))
-          setAppearanceState(style);
+        if (active && isAppearanceStyle(style)) setAppearanceState(style);
         if (active && (isColorMode(value) || value === "system"))
           setPreference(value);
       })
@@ -76,7 +80,9 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     if (Platform.OS !== "web") {
-      Appearance.setColorScheme(preference === "system" ? "auto" : mode);
+      Appearance.setColorScheme(
+        !glossy && preference === "system" ? "auto" : mode,
+      );
       void SystemUI.setBackgroundColorAsync(colors.bg).catch(() => {});
       return;
     }
@@ -91,7 +97,7 @@ export function AppThemeProvider({ children }: { children: ReactNode }) {
       document.head.appendChild(meta);
     }
     meta.content = colors.bg;
-  }, [mode, colors.bg, preference]);
+  }, [mode, colors.bg, preference, glossy]);
   async function setMode(next: Preference) {
     const old = preference;
     setPreference(next);

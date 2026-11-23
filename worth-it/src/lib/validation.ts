@@ -139,7 +139,12 @@ export function validatePollDetails(input: NewPollInput): void {
 
 export function validatePoll(input: NewPollInput): void {
   validatePollDetails(input);
-  if (input.contentKind === "post" && !input.photo && !input.media?.length)
+  if (
+    input.contentKind === "post" &&
+    !input.photo &&
+    !input.media?.length &&
+    !(input.creationSpec?.subtype === "post" && input.productUrl)
+  )
     throw new AppError("invalid", "Add a photo or video to your post.");
   if ((input.media?.length ?? 0) > MAX_POLL_MEDIA)
     throw new AppError("invalid", `Add up to ${MAX_POLL_MEDIA} media items.`);

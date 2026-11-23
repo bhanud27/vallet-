@@ -2,6 +2,8 @@ import type { User } from "@supabase/supabase-js";
 import * as Linking from "expo-linking";
 import { Platform } from "react-native";
 
+import { validateNewPassword } from "./accountSecurity";
+import { verifyAccountCallback } from "./authCallback";
 import { supabase } from "./supabase";
 import type { Session } from "./types";
 import { USERNAME_TAKEN } from "./username";
@@ -17,11 +19,16 @@ export function appSession(user: User): Session {
   };
 }
 
-let passwordRecovery = false;
-export const recoveryAllowed = () => passwordRecovery;
-export const clearRecovery = () => {
-  passwordRecovery = false;
-};
+let recoveryUserId: string | null = null;
+
+export function recoveryAllowed(userId?: string | null) {
+  return !!userId && recoveryUserId === userId;
+}
+
+export function clearRecovery() {
+  recoveryUserId = null;
+}
+
 function client() {
   if (!supabase)
     throw new Error(
@@ -37,6 +44,16 @@ export function confirmationUrl() {
   return Linking.createURL("auth-confirm");
 }
 
+export function passwordRecoveryUrl() {
+  const callback = confirmationUrl();
+  if (Platform.OS === "web") return callback;
+  if (/^exps?:/i.test(callback))
+    throw new Error(
+      "For password reset, open Worth It in the Android development app or a web browser and request a new link there.",
+    );
+  return "worthit://auth-confirm";
+}
+
 export async function signIn(
   email: string,
   password: string,
@@ -48,6 +65,7 @@ export async function signIn(
     options: { captchaToken },
   });
   if (error) throw error;
+  clearRecovery();
   return appSession(data.user);
 }
 
@@ -137,45 +155,23 @@ export async function finishGuestUpgrade(
 }
 
 export async function confirmAccount(callback: string) {
-  const url = new URL(callback);
-  const fragment = new URLSearchParams(url.hash.replace(/^#/, ""));
-  const param = (name: string) =>
-    url.searchParams.get(name) ?? fragment.get(name);
-  if (param("error") || param("error_code"))
-    throw new Error("This confirmation link is invalid or expired.");
+  const { user, recovery } = await verifyAccountCallback(client(), callback);
+  recoveryUserId = recovery && !user.is_anonymous ? user.id : null;
+  return { session: appSession(user), recovery: recoveryAllowed(user.id) };
+}
+
+export async function saveRecoveredPassword(password: string, confirm: string) {
+  validateNewPassword(password, confirm);
   const auth = client();
-  const code = param("code");
-  const access_token = param("access_token");
-  const refresh_token = param("refresh_token");
-  const token_hash = param("token_hash");
-  const type = param("type");
-  let result;
-  if (code) result = await auth.exchangeCodeForSession(code);
-  else if (
-    access_token &&
-    refresh_token &&
-    (type === "signup" || type === "email_change" || type === "email" || !type)
-  ) {
-    result = await auth.setSession({ access_token, refresh_token });
-  } else if (
-    token_hash &&
-    (type === "signup" ||
-      type === "email_change" ||
-      type === "email" ||
-      type === "recovery")
-  ) {
-    result = await auth.verifyOtp({ token_hash, type });
-  } else {
-    throw new Error("Open the confirmation link from your email to finish.");
-  }
-  if (result.error) throw result.error;
-  if (!result.data.user)
-    throw new Error("Could not confirm the account. Try signing in.");
-  if (
-    ("redirectType" in result.data &&
-      result.data.redirectType === "recovery") ||
-    (token_hash && type === "recovery")
-  )
-    passwordRecovery = true;
-  return appSession(result.data.user);
+  const { data, error } = await auth.getUser();
+  if (error || !data.user || !recoveryAllowed(data.user.id))
+    throw new Error(
+      "Your recovery session expired. Request a fresh reset email.",
+    );
+  const result = await auth.updateUser({ password });
+  if (result.error)
+    throw new Error(
+      "Could not update your password. Try again or request a fresh reset email.",
+    );
+  clearRecovery();
 }

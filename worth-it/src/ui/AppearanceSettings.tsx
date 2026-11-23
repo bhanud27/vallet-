@@ -1,28 +1,26 @@
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { useTheme } from "./theme";
+import { appearanceLabels, useTheme } from "./theme";
 import { useThemeActions } from "./AppThemeProvider";
 import { Banner } from "./kit";
 import { ThemeSurface } from "./ThemeSurface";
 export function AppearanceSettings() {
-  const { type, colors, reducedEffects } = useTheme(),
+  const { type, colors, reducedEffects, glossy } = useTheme(),
     { preference, setMode, appearance, setAppearance } = useThemeActions();
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   return (
     <View style={{ gap: 16 }}>
-      <Text style={type.h2}>
-        {appearance === "normal" ? "Normal theme" : "Liquid Glass theme"}
-      </Text>
+      <Text style={type.h2}>{appearanceLabels[appearance]} theme</Text>
       <View
         accessibilityRole="radiogroup"
         style={{ flexDirection: "row", gap: 8 }}
       >
-        {(["normal", "glass"] as const).map((value) => (
+        {(["normal", "glossy", "glass"] as const).map((value) => (
           <Pressable
             key={value}
             accessibilityRole="radio"
-            accessibilityLabel={value === "normal" ? "Normal" : "Liquid Glass"}
+            accessibilityLabel={appearanceLabels[value]}
             aria-checked={appearance === value}
             accessibilityState={{
               checked: appearance === value,
@@ -42,7 +40,9 @@ export function AppearanceSettings() {
             }}
             style={{
               flex: 1,
-              padding: 14,
+              paddingHorizontal: 6,
+              paddingVertical: 10,
+              justifyContent: "center",
               minHeight: 48,
               borderRadius: 12,
               backgroundColor:
@@ -59,7 +59,7 @@ export function AppearanceSettings() {
                 },
               ]}
             >
-              {value === "normal" ? "Normal" : "Liquid Glass"}
+              {appearanceLabels[value]}
             </Text>
           </Pressable>
         ))}
@@ -80,12 +80,14 @@ export function AppearanceSettings() {
         }}
       >
         <Text style={type.h2}>
-          {appearance === "glass" ? "Glass preview" : "Normal preview"}
+          {appearance === "glass"
+            ? "Glass preview"
+            : appearanceLabels[appearance] + " preview"}
         </Text>
         <Text style={type.body}>
           Your selection updates the app immediately.
         </Text>
-        {appearance === "glass" && reducedEffects ? (
+        {appearance !== "normal" && reducedEffects ? (
           <Text style={type.small}>
             Reduced effects are enabled on this device. Solid surfaces keep
             content readable.
@@ -111,15 +113,15 @@ export function AppearanceSettings() {
             key={mode}
             accessibilityRole="radio"
             aria-checked={preference === mode}
-            aria-disabled={busy}
+            aria-disabled={busy || !!glossy}
             accessibilityLabel={
               mode === "light" ? "Light" : mode === "dark" ? "Dark" : "System"
             }
             accessibilityState={{
               checked: preference === mode,
-              disabled: busy,
+              disabled: busy || !!glossy,
             }}
-            disabled={busy}
+            disabled={busy || !!glossy}
             onPress={async () => {
               setBusy(true);
               setError("");
@@ -138,7 +140,7 @@ export function AppearanceSettings() {
               justifyContent: "center",
               alignItems: "center",
               backgroundColor:
-                preference === mode ? colors.accent : colors.surface,
+                !glossy && preference === mode ? colors.accent : colors.surface,
             }}
           >
             <Text
@@ -147,7 +149,11 @@ export function AppearanceSettings() {
                 {
                   fontWeight: "700",
                   fontSize: 14,
-                  color: preference === mode ? colors.onAccent : colors.ink,
+                  color: glossy
+                    ? colors.muted
+                    : preference === mode
+                      ? colors.onAccent
+                      : colors.ink,
                 },
               ]}
             >
@@ -157,7 +163,9 @@ export function AppearanceSettings() {
         ))}
       </View>
       <Text style={type.small}>
-        System follows your device. Your selection is saved on this device.
+        {glossy
+          ? "Glossy Dark uses dark colors. Your color mode is saved for the other themes."
+          : "System follows your device. Your selection is saved on this device."}
       </Text>
       {error ? <Banner kind="error">{error}</Banner> : null}
     </View>

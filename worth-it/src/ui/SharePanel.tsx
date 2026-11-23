@@ -4,6 +4,7 @@ import { Linking, Platform, Share, Text, View } from "react-native";
 import { repo } from "../lib/repo";
 import { pollLink } from "../lib/share";
 import { Banner, Button } from "./kit";
+import { GlossyReflection } from "./ThemeSurface";
 import { useTheme } from "./theme";
 
 export function SharePanel({
@@ -13,7 +14,7 @@ export function SharePanel({
   pollId: string;
   post?: boolean;
 }) {
-  const { colors, type } = useTheme();
+  const { colors, type, glossy } = useTheme();
 
   const { url, reachable } = pollLink(pollId);
   const message = post ? "See my style on Worth It?" : "Is this worth it?";
@@ -68,7 +69,8 @@ export function SharePanel({
   return (
     <View
       style={{
-        backgroundColor: colors.surface,
+        backgroundColor: glossy?.cardFill ?? colors.surface,
+        overflow: glossy ? "hidden" : undefined,
         borderRadius: 16,
         padding: 14,
         gap: 10,
@@ -76,6 +78,7 @@ export function SharePanel({
         borderColor: colors.border,
       }}
     >
+      <GlossyReflection />
       <Text style={type.h2}>
         {post ? "Share this post" : "Share this poll"}
       </Text>

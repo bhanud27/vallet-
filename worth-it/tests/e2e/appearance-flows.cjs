@@ -40,7 +40,10 @@ exports.verifyAppearance = async ({ page, base, shots, width, expect }) => {
       .toBe(fill);
     // Glass decorates the card; photos remain unfiltered and content remains tappable.
     expect(
-      await card
+      await page
+        .getByTestId("feed-poll-surface")
+        .filter({ has: page.locator("img") })
+        .first()
         .locator("img")
         .first()
         .evaluate((node) => getComputedStyle(node).filter),

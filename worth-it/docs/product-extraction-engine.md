@@ -184,3 +184,105 @@ No API keys are needed for default public metadata extraction. Browser rendering
 The creation UI now sends a details-only request first, displays available title/price immediately, then requests validated photos. The second stage reuses a bounded metadata cache (16 entries, at most 512KiB each) and in-flight page parsing instead of fetching the store page again. Old clients still receive the full response by default. Refresh invalidates both frontend stages; price expiry remains tied to the original observation time. Gallery downloading has an eight-second budget; metadata retains its configured twenty-second maximum. Available details survive photo failures. The debounce is now 400ms.
 
 Poll/product image covers show the available store price at the lower-left, including decimals and explicit currency. Unknown currencies are labeled rather than assumed to be INR. No database migration is required.
+
+## Link-first creation flow
+
+The Create entry point at /add opens the same composer used by the existing /new and /new-post routes. Paste an HTTPS link or upload a photo. A preview with a title or photo enables the Poll, Compare, and Post cards. A pencil opens the product editor. The comparison composer keeps both products in the same draft, and the Post composer keeps its extra attachments separate from the shared product photos.
+
+The client debounces URL changes, coalesces concurrent requests for the same URL and stage, and cancels stale requests. The importer shares the document cache across stages. Its rich response validates one cover image and returns the available identity fields. The optional details stage reuses the same retailer adapters and approved fallbacks, then fills gaps without overwriting manual edits. The original validated link supplies the View product destination, including variant parameters. If the importer cannot supply a usable preview, retry, manual entry, and photo upload remain available.
+
+The composer uses the existing `/api/product-preview` endpoint. It requests `mode: "rich"` for identity and the cover, then uses `detailsOnly: true` for optional metadata. If enrichment finds new image candidates, `mode: "enriched-preview"` validates one cover using that cached result. The endpoint still accepts the legacy full-gallery request.
+
+The existing URL and redirect policy, retailer access checks, image validation, rate limits, local draft store, upload pipeline, and publisher are reused. The link-preview Posts migration extends the existing Posts constraint to accept a validated product link as the attachment when a photo is missing. It uses the same publishing permissions and content checks as media-backed Posts.
+
+### Architecture and changed files
+
+| Area | Files |
+|---|---|
+| Create and published views | [add.tsx](../src/app/add.tsx), [route configuration](../src/app/_layout.tsx), [ContentComposer.tsx](../src/ui/ContentComposer.tsx), [CreationBody.tsx](../src/ui/CreationBody.tsx) |
+| Preview, editor and media | [ProductEditor.tsx](../src/ui/creation/ProductEditor.tsx), [ProductPreviewCard.tsx](../src/ui/creation/ProductPreviewCard.tsx), [ProductEditSheet.tsx](../src/ui/creation/ProductEditSheet.tsx), [productMedia.ts](../src/ui/creation/productMedia.ts), [CreationIconButton.tsx](../src/ui/creation/CreationIconButton.tsx) |
+| Navigation and appearance | [AppTabs.tsx](../src/ui/AppTabs.tsx), [FloatingHeader.tsx](../src/ui/FloatingHeader.tsx), [FloatingSurface.tsx](../src/ui/FloatingSurface.tsx), [SocialIcon.tsx](../src/ui/SocialIcon.tsx), [ThemeSurface.tsx](../src/ui/ThemeSurface.tsx), [theme.ts](../src/ui/theme.ts) |
+| Preview client and draft | [productPreview.ts](../src/lib/productPreview.ts), [creationDraft.ts](../src/lib/creationDraft.ts), [validation.ts](../src/lib/validation.ts) |
+| Importer and database | [product-import.cjs](../server/product-import.cjs), [product-model.cjs](../server/product-model.cjs), [link-only post migration](../supabase/migrations/20261122053448_link_preview_posts.sql) |
+| Verification | [Live diagnostics](../scripts/check-product-links.cjs), [extractor tests](../tests/productEngine.test.ts), [SQL tests](../supabase/tests/110_creation_flow_test.sql), [creation browser tests](../tests/e2e/creation-flows.cjs), [navigation browser tests](../tests/e2e/navigation-flows.cjs), [appearance browser tests](../tests/e2e/appearance-flows.cjs), [social browser suite](../tests/e2e/social-layout.cjs), [encoding test](../tests/sourceEncoding.test.ts) |
+
+### Mobile screenshots
+
+The browser screenshots use fixture responses for predictable visual coverage. The supplied attachment contained the written brief. The visual review used its stated layout, dimensions, and colors.
+
+| Screen | Captures |
+|---|---|
+| Normal | [Dark, 390 px](screenshots/creation/03-preview-dark-normal.png), [Dark, 414 px](screenshots/creation/11-preview-414px-dark-normal.png), [Light](screenshots/creation/08-preview-light-normal.png) |
+| Liquid Glass | [Dark](screenshots/creation/10-preview-dark-glass.png), [Light](screenshots/creation/09-preview-light-glass.png) |
+| Composers | [Poll](screenshots/creation/04-poll-dark-normal.png), [Compare](screenshots/creation/05-compare-dark-normal.png), [Post](screenshots/creation/06-post-dark-normal.png) |
+| Preview states | [Empty](screenshots/creation/01-empty-dark-normal.png), [Loading](screenshots/creation/02-loading-dark-normal.png), [Title with no image or price](screenshots/creation/07-partial-dark-normal.png) |
+
+### Automated verification
+
+Lint and TypeScript checks passed. All 141 automated tests passed, including isolated PostgreSQL checks for link-only Posts and fixture checks for shared extraction and partial previews. Expo exported web, Android, and iOS bundles. The focused creation browser suite passed at 320, 390, 414, and 1024 pixels with mocked importer responses and real local publishing. The full social browser suite also passed at 390, 414, and 1024 pixels.
+
+### Live retailer verification
+
+The importer ran with its normal access policy against public links on 22 November 2026. These outcomes apply to the tested URLs under the local importer configuration. Production image-copy settings apply when deployed.
+
+| Source | Live rich preview result |
+|---|---|
+| [Amazon India](https://www.amazon.in/iPhone-16-128-GB-Control/dp/B0DGJHBX5Y) | Product title and a validated 1500 × 1500 image. Price unavailable. |
+| [Books to Scrape](https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html) | Book title and a validated image. Price unavailable. |
+| [AMP product example](https://amp.dev/documentation/examples/e-commerce/product_page/) | Title, validated image and USD price. The slashless URL also resolved to the product page. |
+| Flipkart | Description only. The flow offered manual entry. |
+| Myntra | The access-policy check timed out. |
+| AJIO, Meesho, H&M, Zara | The access-policy request returned HTTP 403. |
+
+The local browser publishing checks use the application's device repository. The pinned Supabase project has no recorded migration history. The baseline command reached PostgreSQL, which rejected the configured password, so the link-only Posts migration remains pending.
+
+## Universal resolver verification on 22 November 2026
+
+Pasted links and Android shares enter the same editor and product-preview API. The resolver checks the in-process cache, then the existing retailer adapters and public metadata parser. The first preview prioritizes the title and one decoded cover. The existing enrichment request fills missing fields and can supply another approved cover candidate. Downstream Poll, Compare and Post use the existing preview and manual editing flow.
+
+The identity index uses only an observed product URL with a title and a validated image. Normalized URLs and recognized retailer product IDs can share a cached result when the origin, region and selection parameters agree. An HTML canonical declaration cannot create a cache alias. Exact structured variants use their own images. Price freshness is tracked from metadata extraction. On a transient refresh failure, the resolver can return saved identity and strip expired prices, offers and availability.
+
+The former three-second robots deadline in `server/retailer-policy.cjs` and its shared error classification caused policy timeouts and access denials to look identical. The policy check now defaults to 5 seconds and reports its own stage and reason. A policy or product-page HTTP 403 remains a denial. Resets, timeouts, 429s, missing metadata and invalid URLs have different codes. An unavailable policy still prevents the direct request. Image redirects also check the exact production copy allowlist at each hop.
+
+### Live results from the Worth It server
+
+The direct checks below ran from this workspace with external providers disabled. Every sample was identified as the stated retailer. Elapsed times are for one rich-preview request. Title and price reflect the metadata returned during that run. Android Share delivery and rendering on a physical phone remain pending.
+
+| Product URL | Live result | Title, cover and price | Time |
+| --- | --- | --- | ---: |
+| [Myntra share path](https://www.myntra.com/mailers/shirts/allensolly/allen-solly-relaxed-fit-printed-pure-cotton-casual-shirt/34912279/buy?utm_source=share) | `POLICY_TIMEOUT`, robots deadline | Product page not reached. The user previously observed a reset on a separate request. Reset classification was verified using a fixture. | 5,028 ms |
+| [AJIO Rush](https://rush.ajio.com/nike-jordan-franchise-sandals/p/469848114_black) and [AJIO](https://www.ajio.com/nike-jordan-franchise-sandals/p/469848114_black) | `ACCESS_RESTRICTED`, robots HTTP 403 | Product pages not reached. | 117 / 120 ms |
+| [Meesho](https://www.meesho.com/womens-printed-cotton-kurti/p/34q2z) | `ACCESS_RESTRICTED`, robots HTTP 403 | Product page not reached on this network. The user previously observed robots HTTP 200 followed by product-page HTTP 403. The page-stage denial was verified using a fixture. | 86 ms |
+| [H&M India](https://www2.hm.com/en_in/productpage.1134781001.html) | `ACCESS_RESTRICTED`, robots HTTP 403 | Product page not reached. | 120 ms |
+| [Zara India](https://www.zara.com/in/en/slim-fit-cotton-shirt-p08822051.html) | `ACCESS_RESTRICTED`, robots HTTP 403 | Product page not reached. | 76 ms |
+| [Amazon India](https://www.amazon.in/iPhone-16-128-GB-Control/dp/B0DGJHBX5Y) | Partial, ASIN B0DGJHBX5Y | iPhone 16 128GB 5G Mobile Phone. Worth It web rendered the 1500 x 1500 cover. Price unavailable. | 3,248 ms |
+| [Flipkart](https://www.flipkart.com/apple-iphone-16-black-128-gb/p/itmb07d67f995271?BU=Mixed&param=16475) | Partial, listing itmb07d67f995271 | Apple iPhone 16 (Black, 128 GB), INR 69,900. The image CDN robots endpoints returned HTTP 406 on follow-up, so Worth It web showed the title and manual photo flow. | 2,355 ms |
+| [AMP e-commerce sample](https://amp.dev/documentation/examples/e-commerce/product_page/) | Partial, generic product page | Apple, USD 1.99. Worth It web rendered the 1024 x 682 cover. | 2,249 ms |
+
+The web rendering check sent product API requests directly to the local product-preview middleware. Poll, Compare and Post were available in each of those three previews. The separate fixture-driven browser suite tested creation and publishing actions at 320, 390, 414 and 1024 px. Public desktop product URLs were used where an app-generated share URL was unavailable. Nykaa was not part of the live run.
+
+### Android preview APK setup
+
+1. Run `npm run import:server` as a Node service behind HTTPS with `NODE_ENV=production`. Set `PRODUCT_AUTH_SUPABASE_URL` and `PRODUCT_AUTH_ANON_KEY` to the same Supabase project used by the app.
+2. Set `EXPO_PUBLIC_PRODUCT_IMPORT_URL` to that service's HTTPS origin and set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in the Expo **preview** environment. Rebuild the APK, sign in on the phone, and import an accessible product page to verify the connection.
+3. For restricted retailers, configure an approved catalog connector with `PRODUCT_PROVIDER_MODULE`. Verify the exact product and variant, the current price and currency, and permission to display or copy the image. Verify real examples for each retailer before treating it as supported.
+
+### Approved providers and local commands
+
+SerpApi's Google Product Result API exposes merchant links inside individual offers. The optional connector requires an exact retailer URL or product ID match in the same market and variant. That match gates title and available price. A thumbnail must be on an explicitly approved host and pass Worth It's normal image checks. Google may return no matching offer for an exact URL query. This was verified with fixtures. Live provider status was `PROVIDER_NOT_CONFIGURED` and no billable requests ran. [SerpApi product result documentation](https://serpapi.com/product-result)
+
+DataForSEO's Google Shopping search uses Google product IDs and documents deprecated seller product-page URL fields in its product search results. Those search results alone cannot establish an exact retailer variant. A DataForSEO connector was not enabled. [DataForSEO product search fields](https://docs.dataforseo.com/v3/merchant-google-products-task_get-advanced/) and [Merchant API overview](https://docs.dataforseo.com/v3/merchant-google-overview/)
+
+Run from the `worth-it` directory in PowerShell.
+
+```powershell
+npm.cmd run check
+$env:CREATION_UI_ONLY = '1'
+npm.cmd run test:social-ui
+$env:PRODUCT_SERPAPI_ENABLED = 'false'
+Remove-Item Env:PRODUCT_PROVIDER_MODULE,Env:PRODUCT_BROWSER_HOSTS -ErrorAction SilentlyContinue
+npm.cmd run test:product-live -- --rich 'https://www.amazon.in/dp/B0DGJHBX5Y'
+npm.cmd run test:product-live -- --provider 'https://www.amazon.in/dp/B0DGJHBX5Y'
+```
+
+For an approved SerpApi trial, set `PRODUCT_SERPAPI_ENABLED=true`, `SERPAPI_API_KEY` and the market in `PRODUCT_SERPAPI_COUNTRY` in a private server environment. Set `PRODUCT_IMAGE_COPY_HOSTS` to exact CDN hostnames only after confirming usage rights. Then run the last command in that environment to check for an exact match and inspect its fields. Run the rich resolver with the same configuration to test image access and decoding. The sample importer settings also document the TTLs, policy deadline, and custom provider hook.

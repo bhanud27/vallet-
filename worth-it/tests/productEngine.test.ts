@@ -123,6 +123,10 @@ test("structured graphs retain selected variants and report conflicts without re
   assert.equal(p.product.price.current, 1299);
   assert.equal(p.product.variants[0].price, 1699);
   assert.equal(p.product.variants[1].price, 1299);
+  assert.deepEqual(
+    p.product.images.map((i: { url: string }) => i.url),
+    ["https://store.example/blue.jpg"],
+  );
   assert.equal(p.product.price.original, null);
   assert.equal(p.product.gtin, "1234567890123");
   assert.match(p.source.canonical_url, /variant=blue/);
@@ -414,4 +418,290 @@ test("never pairs a structured price with a disagreeing embedded offer currency"
   assert.equal(p.product.price.current, 499);
   assert.equal(p.product.price.currency, "INR");
   assert.equal(p.product.price.original, null);
+});
+
+test("rich preview shares metadata with enrichment and validates only a suitable cover", async () => {
+  const png = await require("sharp")({
+    create: { width: 320, height: 400, channels: 3, background: "#665544" },
+  })
+    .png()
+    .toBuffer();
+  const requested: string[] = [];
+  const short = "https://short.example/r?sku=blue";
+  const target = "https://shop.example/item?variant=blue";
+  let providerCalls = 0;
+  let returnDetails!: () => void;
+  const providerReady = new Promise<void>((resolve) => {
+    returnDetails = resolve;
+  });
+  const importer = createProductImporter({
+    log: noLog,
+    policy: async () => {},
+    providers: [
+      {
+        name: "approved-preview-test",
+        supports: () => true,
+        extract: async ({ url }: { url: string }) => {
+          providerCalls++;
+          await providerReady;
+          return { url, html: productDoc(1199) };
+        },
+      },
+    ],
+    fetchFile: async (url: string) => {
+      requested.push(url);
+      if (url.endsWith(".png"))
+        return {
+          url: new URL(url),
+          type: "image/png",
+          body: png,
+        };
+      return {
+        url: new URL(target),
+        type: "text/html",
+        body: Buffer.from(
+          '<meta property="og:site_name" content="Fixture store">' +
+            '<meta property="og:title" content="Canvas shoes">' +
+            '<meta property="og:image" content="/front.png">' +
+            '<meta property="og:image" content="/second.png">' +
+            '<meta property="og:description" content="A canvas upper.">' +
+            '<link rel="canonical" href="/item">',
+        ),
+      };
+    },
+  });
+  const [rich, same] = await Promise.all([
+    importer(short, false, false, "rich"),
+    importer(short, false, false, "rich"),
+  ]);
+  assert.equal(rich.name, "Canvas shoes");
+  assert.equal(rich.price, null);
+  assert.equal(rich.images.length, 1);
+  assert.equal(same.images.length, 1);
+  assert.equal(rich.source.site_name, "Fixture store");
+  assert.equal(rich.source.original_url, short);
+  assert.equal(rich.source.canonical_url, target);
+  assert.equal(providerCalls, 0);
+  assert.deepEqual(requested, [short, "https://shop.example/front.png"]);
+  const enrichment = importer(short, false, true);
+  returnDetails();
+  const details = await enrichment;
+  assert.equal(providerCalls, 1);
+  assert.equal(details.price, 1199);
+  assert.deepEqual(details.images, []);
+  assert.equal(requested.length, 2);
+});
+
+test("robots failures identify the policy stage while a product 403 identifies the page stage", async () => {
+  const scenarios = [
+    {
+      failure: { code: "ECONNRESET" },
+      code: "CONNECTION_RESET",
+      reason: "ROBOTS_CONNECTION_RESET",
+    },
+    {
+      failure: { name: "TimeoutError" },
+      code: "POLICY_TIMEOUT",
+      reason: "ROBOTS_TIMEOUT",
+    },
+    {
+      failure: { remoteStatus: 403 },
+      code: "ACCESS_RESTRICTED",
+      reason: "ROBOTS_HTTP_DENIED",
+    },
+    {
+      failure: { remoteStatus: 429, retryAfter: "60" },
+      code: "RATE_LIMITED",
+      reason: "ROBOTS_RATE_LIMITED",
+    },
+    { failure: null, code: "ACCESS_RESTRICTED", reason: "PAGE_HTTP_DENIED" },
+  ];
+  for (const scenario of scenarios) {
+    let pages = 0;
+    const importer = createProductImporter({
+      log: noLog,
+      providers: [],
+      fetchFile: async (url: string) => {
+        if (url.endsWith("/robots.txt")) {
+          if (scenario.failure)
+            throw Object.assign(new Error("Fixture"), scenario.failure);
+          return {
+            url: new URL(url),
+            type: "text/plain",
+            body: Buffer.from("User-agent: *\nDisallow:"),
+          };
+        }
+        pages++;
+        throw Object.assign(new Error("Fixture"), {
+          remoteStatus: 403,
+          stage: "page",
+          reason: "PAGE_HTTP_DENIED",
+        });
+      },
+    });
+    await assert.rejects(importer("https://store.example/item"), {
+      code: scenario.code,
+      stage: scenario.failure ? "policy" : "page",
+      reason: scenario.reason,
+      providerFailures: [{ code: "PROVIDER_NOT_CONFIGURED" }],
+    });
+    assert.equal(pages, scenario.failure ? 0 : 1);
+  }
+});
+
+test("verified cache aliases match retailer IDs while honoring variant, locale, and canonical scope", async () => {
+  const sharp = require("sharp");
+  const png = await sharp({
+    create: { width: 400, height: 320, channels: 3, background: "#554488" },
+  })
+    .png()
+    .toBuffer();
+  const calls: string[] = [];
+  const importer = createProductImporter({
+    log: noLog,
+    policy: async () => {},
+    providers: [],
+    fetchFile: async (url: string) => {
+      if (url.endsWith(".png"))
+        return { url: new URL(url), type: "image/png", body: png };
+      calls.push(url);
+      return {
+        url: new URL(url),
+        type: "text/html",
+        body: Buffer.from(
+          productDoc(499, {
+            name: url.includes("red") ? "Red shirt" : "Blue shirt",
+            image: "/cover.png",
+          }) + '<link rel="canonical" href="/dp/B0ABCDE123?variant=red">',
+        ),
+      };
+    },
+  });
+  const target = "https://www.amazon.in/shirt/dp/B0ABCDE123?variant=blue";
+  assert.equal((await importer(target)).name, "Blue shirt");
+  const tracked =
+    "https://www.amazon.in/dp/B0ABCDE123?utm_source=share&variant=blue";
+  const hit = await importer(tracked);
+  assert.equal(hit.name, "Blue shirt");
+  assert.equal(hit.source.original_url, tracked);
+  assert.equal(hit.extraction.cache, "hit");
+  assert.equal(calls.length, 1);
+  assert.equal(
+    (await importer("https://www.amazon.in/dp/B0ABCDE123?variant=red")).name,
+    "Red shirt",
+  );
+  await importer("https://www.amazon.com/dp/B0ABCDE123?variant=blue");
+  assert.equal(calls.length, 3);
+});
+
+test("SerpApi requires an exact retailer offer and an approved image host", async () => {
+  const {
+    exactOffer,
+    configuredSerpApi,
+  } = require("../server/product-serpapi.cjs");
+  const target = "https://www.ajio.com/item/p/123_blue";
+  const other = {
+    link: "https://www.ajio.com/item/p/123_red",
+    title: "Similar shirt",
+    thumbnail: "https://images.example/red.jpg",
+    extracted_price: 499,
+    currency: "INR",
+  };
+  const exact = {
+    ...other,
+    link: "https://www.ajio.com/shirt/p/123_blue?utm_source=share",
+    title: "Exact shirt",
+    thumbnail: "https://images.example/blue.jpg",
+  };
+  assert.equal(configuredSerpApi({}), null);
+  assert.equal(
+    exactOffer({ product_result: { pricing: [other] } }, target),
+    null,
+  );
+  const p = exactOffer(
+    { product_result: { pricing: [other, exact] } },
+    target,
+    ["images.example"],
+  );
+  assert.equal(p.name, "Exact shirt");
+  assert.equal(p.image, exact.thumbnail);
+  assert.equal(p.offers.price, 499);
+  assert.equal(
+    exactOffer({ product_result: { pricing: [exact] } }, target).image,
+    undefined,
+  );
+  const config = configuredSerpApi(
+    {
+      PRODUCT_SERPAPI_ENABLED: "true",
+      SERPAPI_API_KEY: "fixture-key",
+      PRODUCT_IMAGE_COPY_HOSTS: "images.example",
+    },
+    async (endpoint: string, options: RequestInit) => {
+      assert.equal(new URL(endpoint).origin, "https://serpapi.com");
+      assert.equal(new URL(endpoint).searchParams.get("q"), target);
+      assert.equal(options.redirect, "error");
+      return new Response(
+        JSON.stringify({ product_result: { pricing: [exact] } }),
+      );
+    },
+  );
+  assert.equal(config.supports("ajio", target + "?auth_token=secret"), false);
+  const fetched = await config.extract({
+    url: target + "?utm_source=share",
+    signal: AbortSignal.timeout(1000),
+  });
+  assert.equal(fetched.product.name, "Exact shirt");
+  assert.equal(fetched.product.image, exact.thumbnail);
+});
+
+test("enrichment can supply an approved alternative after rich preview fails to load its cover", async () => {
+  const png = await require("sharp")({
+    create: { width: 400, height: 320, channels: 3, background: "#554488" },
+  })
+    .png()
+    .toBuffer();
+  const url = "https://shop.example/item";
+  let providerCalls = 0;
+  const importer = createProductImporter({
+    log: noLog,
+    policy: async () => {},
+    providers: [
+      {
+        name: "approved-provider",
+        supports: () => true,
+        extract: async () => {
+          providerCalls++;
+          return { url, html: productDoc(1799, { image: "/alternate.png" }) };
+        },
+      },
+    ],
+    fetchFile: async (input: string) => {
+      const resolved = new URL(input);
+      if (resolved.pathname === "/blocked.png")
+        throw Object.assign(new Error("Fixture"), { remoteStatus: 403 });
+      if (resolved.pathname === "/alternate.png")
+        return { url: resolved, type: "image/png", body: png };
+      return {
+        url: resolved,
+        type: "text/html",
+        body: Buffer.from(productDoc(499, { image: "/blocked.png" })),
+      };
+    },
+  });
+  const initial = await importer(url, false, false, "rich");
+  assert.equal(initial.name, "Fixture item");
+  assert.equal(initial.price, 499);
+  assert.equal(initial.images.length, 0);
+  assert.equal(providerCalls, 0);
+  const details = await importer(url, false, true);
+  assert.equal(details.price, 499);
+  assert.equal(details.imagesPending, true);
+  const withCover = await importer(url, false, false, "enriched-preview");
+  assert.equal(providerCalls, 1);
+  assert.equal(withCover.images.length, 1);
+  assert.equal(
+    withCover.product.main_image,
+    "https://shop.example/alternate.png",
+  );
+  assert.equal(withCover.price, 499);
 });

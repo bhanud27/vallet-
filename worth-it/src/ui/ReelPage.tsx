@@ -14,6 +14,8 @@ import { ProfileAvatar } from "./ProfileAvatar";
 import { ReelPoster } from "./ReelPoster";
 import { StoredReelVideo } from "./ReelVideo";
 import { ContentStarButton } from "./ContentStarButton";
+import { GlossyReflection } from "./ThemeSurface";
+import { themedStyles } from "./theme";
 import { SocialIcon } from "./SocialIcon";
 
 export function ReelPage({
@@ -37,6 +39,7 @@ export function ReelPage({
   onDetails: () => void;
   bottomOverlayHeight?: number;
 }) {
+  const styles = useStyles();
   const name = reel.author.username
     ? "@" + reel.author.username
     : reel.author.displayName || "Worth It? member";
@@ -74,6 +77,7 @@ export function ReelPage({
         ]}
       >
         <View style={styles.caption}>
+          <GlossyReflection />
           <Pressable
             style={styles.identity}
             disabled={!profile}
@@ -143,52 +147,65 @@ export function ReelPage({
     </View>
   );
 }
-const styles = StyleSheet.create({
-  page: { width: "100%", backgroundColor: "#000000", overflow: "hidden" },
-  footer: {
-    position: "absolute",
-    left: 12,
-    right: 10,
-    bottom: 18,
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 10,
-  },
-  caption: {
-    flex: 1,
-    minWidth: 0,
-    padding: 10,
-    borderRadius: 12,
-    gap: 7,
-    backgroundColor: "#000000B8",
-  },
-  identity: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    minHeight: 44,
-  },
-  name: { flex: 1, color: "#fff", fontSize: 14, fontWeight: "800" },
-  text: { color: "#fff", fontSize: 14, lineHeight: 20 },
-  demo: {
-    color: "#E7EAB8",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.6,
-  },
-  product: { minHeight: 36, justifyContent: "center" },
-  link: { color: "#DDECAC", fontSize: 13, fontWeight: "700" },
-  actions: { width: 64, alignItems: "center", gap: 14 },
-  action: {
-    minHeight: 52,
-    minWidth: 60,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 5,
-    borderRadius: 14,
-    gap: 4,
-    backgroundColor: "#151515E6",
-  },
-  actionText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  more: { color: "#fff", fontSize: 24, fontWeight: "800", lineHeight: 21 },
-});
+const useStyles = themedStyles(({ colors, glossy }) =>
+  StyleSheet.create({
+    page: {
+      width: "100%",
+      backgroundColor: glossy ? colors.bg : "#000000",
+      overflow: "hidden",
+    },
+    footer: {
+      position: "absolute",
+      left: 12,
+      right: 10,
+      bottom: 18,
+      flexDirection: "row",
+      alignItems: "flex-end",
+      gap: 10,
+    },
+    caption: {
+      flex: 1,
+      minWidth: 0,
+      padding: 10,
+      borderRadius: 12,
+      gap: 7,
+      backgroundColor: glossy?.cardFill ?? "#000000B8",
+      overflow: glossy ? "hidden" : undefined,
+      borderWidth: glossy ? 1 : 0,
+      borderColor: colors.border,
+    },
+    identity: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      minHeight: 44,
+    },
+    name: { flex: 1, color: "#fff", fontSize: 14, fontWeight: "800" },
+    text: { color: "#fff", fontSize: 14, lineHeight: 20 },
+    demo: {
+      color: glossy ? colors.muted : "#E7EAB8",
+      fontSize: 10,
+      fontWeight: "800",
+      letterSpacing: 0.6,
+    },
+    product: { minHeight: 36, justifyContent: "center" },
+    link: {
+      color: glossy ? colors.accentInk : "#DDECAC",
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    actions: { width: 64, alignItems: "center", gap: 14 },
+    action: {
+      minHeight: 52,
+      minWidth: 60,
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 5,
+      borderRadius: 14,
+      gap: 4,
+      backgroundColor: glossy?.navigationFill ?? "#151515E6",
+    },
+    actionText: { color: "#fff", fontSize: 10, fontWeight: "700" },
+    more: { color: "#fff", fontSize: 24, fontWeight: "800", lineHeight: 21 },
+  }),
+);

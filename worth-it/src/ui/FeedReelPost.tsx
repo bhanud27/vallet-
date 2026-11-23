@@ -158,7 +158,7 @@ export function FeedReelPost({
     </ThemeSurface>
   );
 }
-const useStyles = themedStyles(({ colors }) =>
+const useStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
     post: {
       width: "100%",
@@ -185,7 +185,7 @@ const useStyles = themedStyles(({ colors }) =>
     name: { fontWeight: "800" },
     open: { minHeight: 44, justifyContent: "center", paddingLeft: 8 },
     link: { fontSize: 13, fontWeight: "700", color: colors.accentInk },
-    media: { width: "100%", backgroundColor: "#000000" },
+    media: { width: "100%", backgroundColor: glossy ? colors.bg : "#000000" },
     body: { paddingHorizontal: 15, paddingTop: 12, gap: 6 },
     actions: {
       flexDirection: "row",

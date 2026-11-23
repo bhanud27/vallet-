@@ -15,13 +15,22 @@ export function FloatingSurface({
   containerStyle,
   tone = "theme",
   radius = 32,
+  creation = false,
   ...props
 }: ViewProps & {
   tone?: "theme" | "dark";
   radius?: number;
+  creation?: boolean;
   containerStyle?: StyleProp<ViewStyle>;
 }) {
-  const { glass, mode, colors } = useTheme();
+  const {
+    glass,
+    glossy,
+    reducedEffects,
+    mode,
+    colors,
+    creation: tokens,
+  } = useTheme();
   const dark = tone === "dark" || mode === "dark";
   return (
     <View
@@ -30,9 +39,15 @@ export function FloatingSurface({
         {
           backgroundColor: "transparent",
           borderRadius: radius,
-          boxShadow: dark
-            ? "0px 4px 16px rgba(0,0,0,0.20)"
-            : "0px 4px 14px rgba(0,0,0,0.08)",
+          boxShadow: glossy
+            ? reducedEffects
+              ? undefined
+              : `0px 5px 18px ${glossy.shadow}`
+            : creation
+              ? undefined
+              : dark
+                ? "0px 4px 16px rgba(0,0,0,0.20)"
+                : "0px 4px 14px rgba(0,0,0,0.08)",
         },
         containerStyle,
       ]}
@@ -40,13 +55,23 @@ export function FloatingSurface({
       <ThemeSurface
         {...props}
         tone={tone}
+        creation={creation}
         frost
+        material="navigation"
         style={[
           {
-            backgroundColor: tone === "dark" ? "#171717" : colors.surface,
+            backgroundColor: creation
+              ? tokens.navigation
+              : tone === "dark"
+                ? "#171717"
+                : colors.surface,
             borderRadius: radius,
             borderWidth: 1,
-            borderColor: tone === "dark" ? "#383838" : colors.border,
+            borderColor: creation
+              ? tokens.border
+              : tone === "dark"
+                ? "#383838"
+                : colors.border,
           },
           style,
         ]}

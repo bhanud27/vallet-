@@ -95,7 +95,7 @@ export function StarButton({
   );
 }
 
-const useStyles = themedStyles(({ colors }) =>
+const useStyles = themedStyles(({ colors, glossy }) =>
   StyleSheet.create({
     group: { alignSelf: "flex-end", alignItems: "center", gap: 3 },
     button: {
@@ -108,7 +108,11 @@ const useStyles = themedStyles(({ colors }) =>
       gap: 5,
     },
     light: { flexDirection: "row", backgroundColor: colors.surface },
-    dark: { minHeight: 60, backgroundColor: "#151515E6", gap: 0 },
+    dark: {
+      minHeight: 60,
+      backgroundColor: glossy?.navigationFill ?? "#151515E6",
+      gap: 0,
+    },
     selected: { backgroundColor: colors.accentSoft },
     symbol: { color: colors.accentInk, fontSize: 23, lineHeight: 26 },
     count: { color: colors.ink, fontSize: 13, fontWeight: "700" },
@@ -118,7 +122,7 @@ const useStyles = themedStyles(({ colors }) =>
     error: { color: colors.danger, fontSize: 11 },
     darkError: {
       color: "#fff",
-      backgroundColor: "#151515E6",
+      backgroundColor: glossy?.navigationFill ?? "#151515E6",
       padding: 4,
       borderRadius: 4,
     },

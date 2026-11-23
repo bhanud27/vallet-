@@ -9,6 +9,7 @@ import {
   type PressableProps,
 } from "react-native";
 import { contentTaps, contentTouchPoint } from "../lib/contentTaps";
+import { useTheme } from "./theme";
 import { useContentStar } from "./useContentStar";
 export function ContentTap({
   kind,
@@ -26,6 +27,7 @@ export function ContentTap({
   starDisabled?: boolean;
   expand?: boolean;
 }) {
+  const { colors, glossy } = useTheme();
   const { set: setStar } = useContentStar(kind, id),
     [reduced, setReduced] = useState(false);
   const [animation] = useState(() => new Animated.Value(0)),
@@ -151,7 +153,7 @@ export function ContentTap({
           <Text
             style={{
               fontSize: 64,
-              color: "#CEFF66",
+              color: glossy ? colors.ink : colors.tag,
               textShadowColor: "#111",
               textShadowRadius: 3,
             }}

@@ -246,19 +246,17 @@ exports.verifyFloatingNavigation = async ({
       .toBeGreaterThan(200);
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page).toHaveURL(/\/add$/);
-    await expect(surface()).toHaveCount(0);
+    await expect(surface()).toBeVisible();
+    await expect(page.getByTestId("floating-header")).toBeVisible();
     await expect(
-      page.locator('[data-testid="stack-floating-header"]:visible'),
+      page.getByRole("button", { name: "Create", exact: true }),
     ).toBeVisible();
-    await page.getByRole("button", { name: "Poll", exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "Continue creation", exact: true }),
-    ).toBeVisible();
-    await page
-      .getByRole("button", { name: "Continue creation", exact: true })
-      .click();
+      page.getByRole("button", { name: "Poll", exact: true }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "Preview", exact: true }).click();
     await expect(
-      page.getByText("Enter a product name.", { exact: true }),
+      page.getByText("Enter a valid public product link.", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Back", exact: true }),

@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useTheme } from "./theme";
 
 export type SocialIconName =
@@ -17,7 +17,15 @@ export type SocialIconName =
   | "search"
   | "bell"
   | "grid"
-  | "list";
+  | "list"
+  | "heart"
+  | "bars"
+  | "compare"
+  | "pencil"
+  | "compose"
+  | "link"
+  | "back"
+  | "close";
 
 export function SocialIcon({
   name,
@@ -44,6 +52,118 @@ export function SocialIcon({
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     >
+      {name === "bars" && (
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "flex-end",
+            gap: 3,
+            height: 20,
+          }}
+        >
+          {[8, 14, 20].map((height) => (
+            <View
+              key={height}
+              style={[{ width: 4, height, borderRadius: 1 }, fill]}
+            />
+          ))}
+        </View>
+      )}
+      {name === "heart" && (
+        <Text style={{ color, fontSize: 26, lineHeight: 26 }}>{"\u2661"}</Text>
+      )}
+      {name === "compare" && (
+        <Text style={{ color, fontSize: 24, lineHeight: 26 }}>{"\u21c4"}</Text>
+      )}
+      {name === "back" && (
+        <View
+          style={[
+            {
+              width: 11,
+              height: 11,
+              borderLeftWidth: 2,
+              borderBottomWidth: 2,
+              transform: [{ rotate: "45deg" }],
+            },
+            stroke,
+          ]}
+        />
+      )}
+      {name === "close" && (
+        <>
+          <View
+            style={[
+              styles.horizontal,
+              fill,
+              { transform: [{ rotate: "45deg" }] },
+            ]}
+          />
+          <View
+            style={[
+              styles.horizontal,
+              fill,
+              { transform: [{ rotate: "-45deg" }] },
+            ]}
+          />
+        </>
+      )}
+      {name === "link" && (
+        <View
+          style={{ flexDirection: "row", transform: [{ rotate: "-42deg" }] }}
+        >
+          {[0, 1].map((part) => (
+            <View
+              key={part}
+              style={[
+                {
+                  width: 12,
+                  height: 8,
+                  borderRadius: 4,
+                  borderWidth: 2,
+                  marginLeft: part ? -3 : 0,
+                },
+                stroke,
+              ]}
+            />
+          ))}
+        </View>
+      )}
+      {(name === "pencil" || name === "compose") && (
+        <>
+          {name === "compose" ? (
+            <View
+              style={[
+                {
+                  position: "absolute",
+                  bottom: 2,
+                  left: 2,
+                  width: 16,
+                  height: 16,
+                  borderWidth: 2,
+                  borderRadius: 3,
+                },
+                stroke,
+              ]}
+            />
+          ) : null}
+          <View
+            style={[
+              {
+                width: 4,
+                height: 15,
+                borderWidth: 1.5,
+                borderRadius: 1,
+                transform: [
+                  { translateX: name === "compose" ? 4 : 0 },
+                  { translateY: name === "compose" ? -4 : 0 },
+                  { rotate: "42deg" },
+                ],
+              },
+              stroke,
+            ]}
+          />
+        </>
+      )}
       {name === "home" && (
         <>
           <View

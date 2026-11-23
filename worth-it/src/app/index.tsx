@@ -1,6 +1,6 @@
 import { FLOATING_NAV, floatingDockHeight } from "../lib/floatingNavigation";
 import { FloatingHeader } from "../ui/FloatingHeader";
-import { ThemeSurface } from "../ui/ThemeSurface";
+import { GlossyReflection, ThemeSurface } from "../ui/ThemeSurface";
 import { CreationBody } from "../ui/CreationBody";
 import { SavePoll } from "../ui/SavePoll";
 import { ContentTap } from "../ui/ContentTap";
@@ -453,6 +453,7 @@ export default function Home() {
                   pressed && styles.pressed,
                 ]}
               >
+                <GlossyReflection />
                 <View style={styles.discoveryIcon}>
                   <SocialIcon name="search" color={colors.accentInk} />
                 </View>
@@ -514,7 +515,7 @@ export default function Home() {
   );
 }
 
-const useStyles = themedStyles(({ colors, pageBackground }) =>
+const useStyles = themedStyles(({ colors, pageBackground, glossy }) =>
   StyleSheet.create({
     page: { flex: 1, backgroundColor: pageBackground },
     shell: {
@@ -545,7 +546,8 @@ const useStyles = themedStyles(({ colors, pageBackground }) =>
       alignItems: "center",
       gap: 12,
       padding: 13,
-      backgroundColor: colors.accentSoft,
+      backgroundColor: glossy ? colors.surface : colors.accentSoft,
+      overflow: glossy ? "hidden" : undefined,
       borderRadius: 16,
       borderWidth: 1,
       borderColor: colors.border,
@@ -554,7 +556,7 @@ const useStyles = themedStyles(({ colors, pageBackground }) =>
       width: 38,
       height: 38,
       borderRadius: 12,
-      backgroundColor: colors.surface,
+      backgroundColor: glossy?.elevated ?? colors.surface,
       justifyContent: "center",
       alignItems: "center",
     },
@@ -568,7 +570,7 @@ const useStyles = themedStyles(({ colors, pageBackground }) =>
     modeText: { color: colors.infoInk, fontSize: 12, lineHeight: 17 },
     modeTitle: { fontWeight: "700" },
     card: {
-      borderRadius: 17,
+      borderRadius: glossy ? 22 : 17,
       overflow: "hidden",
       borderWidth: 1,
       borderColor: colors.border,
@@ -604,6 +606,8 @@ const useStyles = themedStyles(({ colors, pageBackground }) =>
       gap: 4,
       justifyContent: "space-between",
       alignItems: "center",
+      borderTopWidth: glossy ? StyleSheet.hairlineWidth : 0,
+      borderColor: colors.border,
     },
     postActions: { flexDirection: "row", alignItems: "center", gap: 6 },
     commentsLink: {

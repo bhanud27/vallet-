@@ -44,6 +44,7 @@ service-account*.json
 *.pfx
 *.jks
 *.keystore
+/meesho-headers.txt
 
 # Local editors and operating-system files
 .idea/
