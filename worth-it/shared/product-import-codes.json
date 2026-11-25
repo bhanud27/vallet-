@@ -1,0 +1,14 @@
+{
+  "IMPORTER_NOT_CONFIGURED": true,
+  "ACCESS_RESTRICTED": true,
+  "POLICY_TIMEOUT": true,
+  "FETCH_TIMEOUT": true,
+  "NETWORK_ERROR": true,
+  "NOT_HTML": true,
+  "JS_RENDER_REQUIRED": true,
+  "CLIENT_IMPORT_REQUIRED": true,
+  "PARTIAL_EXTRACTION": true,
+  "INVALID_URL": true,
+  "UNSAFE_URL": true,
+  "UNKNOWN": true
+}

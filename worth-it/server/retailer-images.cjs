@@ -158,22 +158,28 @@ function retailerPageUrl(input) {
     url.pathname.startsWith("/mailers/")
   )
     url.pathname = url.pathname.slice("/mailers".length);
-  if (/^(www\.)?ajio\.com$/.test(url.hostname)) {
+  if (/^(?:(?:www\.)?ajio\.com|ajioapps\.onelink\.me)$/.test(url.hostname)) {
     for (const key of ["deep_link_value", "af_web_dp"]) {
       try {
         const target = new URL(url.searchParams.get(key));
         if (
           target.protocol === "https:" &&
           /^(www\.)?ajio\.com$/.test(target.hostname) &&
-          /\/p\/[^/]+/.test(target.pathname) &&
+          /\/p\/[a-z0-9_-]+\/?$/i.test(target.pathname) &&
           !target.username &&
           !target.password &&
           !target.port
-        )
-          return target.href;
+        ) {
+          target.hash = "";
+          return retailerPageUrlWithoutTracking(target);
+        }
       } catch {}
     }
   }
+  return retailerPageUrlWithoutTracking(url);
+}
+
+function retailerPageUrlWithoutTracking(url) {
   // Drop tracking only; retain actual product/variant parameters.
   if (retailerPlatform(url.href) !== "other")
     for (const key of [...url.searchParams.keys()])

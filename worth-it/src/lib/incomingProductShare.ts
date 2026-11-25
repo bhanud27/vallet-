@@ -1,12 +1,10 @@
-import { detectProductUrl } from "./validation";
+import { detectProductImportUrl, detectProductUrl, LIMITS } from "./validation";
 
 const MAX_SHARED_TEXT = 32 * 1024;
 
 type SharePayload = { shareType?: string; value?: string };
 
-export function sharedProductUrl(
-  payloads: readonly SharePayload[],
-): string | null {
+export function readSharedProduct(payloads: readonly SharePayload[]) {
   for (const { shareType, value } of payloads) {
     if (
       (shareType != null && shareType !== "text" && shareType !== "url") ||
@@ -16,17 +14,29 @@ export function sharedProductUrl(
       continue;
     const text = value.trim();
     if (!/\s/.test(text)) {
-      const direct = detectProductUrl(text);
-      if (direct) return direct;
+      const direct = detectProductImportUrl(text);
+      if (direct) return { url: direct };
     }
-    for (const [, candidate] of text.matchAll(
+    for (const match of text.matchAll(
       /(?:^|[\s<([{\u201c\u2018"'=])((?:https?:\/\/|www\.)[^\s<>"'\u201c\u201d\u2018\u2019]+)/gi,
     )) {
-      const url = detectProductUrl(candidate.replace(/[.,!?;:)\]}]+$/g, ""));
-      if (url) return url;
+      const url = detectProductImportUrl(match[1].replace(/[.,!?;:)\]}]+$/g, ""));
+      if (url) {
+        const index = match.index + match[0].indexOf(match[1]);
+        const titleHint = [text.slice(0, index), text.slice(index + match[1].length)]
+          .flatMap((part) => part.split(/\r?\n/))
+          .map((line) => line.trim().replace(/^[\s()[\]{}:!?.,—–"'“”]+|[\s()[\]{}:!?.,—–"'“”]+$/gu, ""))
+          .find((line) => line && /\p{L}/u.test(line) && !/https?:\/\/|www\.|^(?:check this out|look at this|found this|would you|buy now|shop now|take a look)\b/i.test(line));
+        return { url, titleHint: titleHint?.slice(0, LIMITS.itemName) };
+      }
     }
   }
   return null;
+}
+
+export function sharedProductUrl(payloads: readonly SharePayload[]): string | null {
+  const share = readSharedProduct(payloads);
+  return share ? detectProductUrl(share.url) : null;
 }
 
 export function isAndroidSharePath(path: string) {
@@ -35,7 +45,7 @@ export function isAndroidSharePath(path: string) {
   );
 }
 
-type IncomingProductShare = { url: string | null };
+type IncomingProductShare = { url: string | null; titleHint?: string };
 
 export function createProductShareInbox() {
   let pending: IncomingProductShare | null = null;
@@ -68,9 +78,9 @@ export function createProductShareInbox() {
     receive(payloads: readonly SharePayload[]) {
       // Expo Router can receive the same intent again after its native data is cleared.
       if (!payloads.length) return;
-      const url = sharedProductUrl(payloads);
-      if (pending?.url === url) return;
-      pending = { url };
+      const share: IncomingProductShare = readSharedProduct(payloads) ?? { url: null };
+      if (pending?.url === share.url && pending?.titleHint === share.titleHint) return;
+      pending = share;
       notify();
     },
     take(share: IncomingProductShare) {

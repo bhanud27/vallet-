@@ -31,6 +31,7 @@ interface ShoppingContext {
 }
 
 export interface Poll extends ShoppingContext {
+  importSource?: NewPollInput["importSource"];
   contentKind?: "poll" | "post";
   archivedAt?: string;
   editedAt?: string;
@@ -104,6 +105,7 @@ export interface Session {
 }
 
 export interface NewPollInput extends ShoppingContext {
+  importSource?: "server" | "device" | "manual";
   contentKind?: "poll" | "post";
   requestId?: string;
   signal?: AbortSignal;

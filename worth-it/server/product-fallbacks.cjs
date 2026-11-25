@@ -8,7 +8,7 @@ function createFallbacks(config = {}) {
       (a.priority || 0) - (b.priority || 0) || (a.cost || 0) - (b.cost || 0),
   );
   const usage = new Map();
-  return async ({ url, retailer, signal, restricted, browser }) => {
+  return async ({ url, retailer, signal, restricted, browser, priceTTL = 300000 }) => {
     const failures = providers.length
       ? []
       : [{ code: "PROVIDER_NOT_CONFIGURED" }];
@@ -41,6 +41,7 @@ function createFallbacks(config = {}) {
       try {
         // The trusted connector maps its documented API response to a Product JSON-LD document.
         // It must bind the document to this URL and obey its vendor's license.
+        // Only an actual merchant offer observation can establish price freshness.
         const result = await Promise.race([
           p.extract({ url, retailer, signal: deadline }),
           new Promise((_, reject) =>
@@ -53,8 +54,17 @@ function createFallbacks(config = {}) {
           typeof result?.html === "string" &&
           Buffer.byteLength(result.html) <= 5 * 1024 * 1024 &&
           result.url === url
-        )
-          return { ...result, method: "authorized_provider", failures };
+        ) {
+          const observed = Date.parse(result.offerObservedAt);
+          const now = Date.now();
+          return {
+            ...result,
+            offerObservedAt:
+              observed <= now && now - observed < priceTTL ? observed : null,
+            method: "authorized_provider",
+            failures,
+          };
+        }
         failures.push({
           provider: p.name,
           code: result == null ? "PROVIDER_NO_EXACT_MATCH" : "PROVIDER_ERROR",

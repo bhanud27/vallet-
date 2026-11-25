@@ -1,5 +1,5 @@
 import { normalizeProductDetails, type ProductDetails } from "./productDetails";
-import { validatePollDetails, parseProductUrl } from "./validation";
+import { canonicalPollProductUrl, validatePollDetails, parseProductUrl } from "./validation";
 export interface PostCursor {
   time: string;
   id: string;
@@ -38,7 +38,7 @@ export function pollEdit(
         : values.itemName.trim(),
     question: values.question.trim(),
     productUrl: values.productUrl
-      ? parseProductUrl(values.productUrl) || ""
+      ? canonicalPollProductUrl(values.productUrl) || ""
       : "",
   };
 }

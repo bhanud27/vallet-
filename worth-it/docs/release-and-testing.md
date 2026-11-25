@@ -262,7 +262,7 @@ The service validates HTTPS URLs, credentials/ports, all DNS results, redirects 
 Setup:
 1. Apply the prior Phase 1/2 migration and `supabase/migrations/20261121061446_product_link_details.sql` through the documented `db:status` / `db:plan` / `db:deploy` flow. Admin credentials are required only for deployment, never for the app or importer.
 2. Restart Expo. Development Metro already mounts the endpoint. Native Expo uses the LAN host automatically, including development configurations pointing the importer at localhost.
-3. For a separate importer, run `npm run import:server`. In production, proxy `/api/product-preview` to it from the web host, or set `EXPO_PUBLIC_PRODUCT_IMPORT_URL` to its HTTPS origin and `PRODUCT_IMPORT_ORIGIN` to the web app origin. A production native app requires the HTTPS importer URL. Do not expose admin keys in public Expo variables.
+3. Run `npm run import:server` behind HTTPS. Set `EXPO_PUBLIC_IMPORTER_URL` to the origin serving `/api/product-preview`, including when the web app proxies that endpoint. Set `PRODUCT_IMPORT_ORIGIN` on the importer if the web app uses a separate origin. The importer URL is a public build variable.
 4. Explicit live verification: `npm run test:product-live -- "https://www.myntra.com/.../buy" "https://www.ajio.com/.../p/..."`. The command reports field values/presence and image counts without logging image bytes or credentials. Offline tests never contact retailers.
 
 Live verification from this environment on 21 November 2026:

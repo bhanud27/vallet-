@@ -1,49 +1,51 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { randomUUID } from "expo-crypto";
+import { ProductWebViewImporter } from "../../components/ProductWebViewImporter";
 import type { CreationMedia, ProductDraft } from "../../lib/creationDraft";
+import type { ProductPhotoSource } from "../../lib/productImportFailure";
 import { productFields } from "../../lib/productDetails";
-import {
-  getProductPreview,
-  productPhoto,
-  ProductPreviewError,
-  type ProductPreview,
-} from "../../lib/productPreview";
+import { productPhoto, type ProductPreview } from "../../lib/productPreview";
+import { useProductImport } from "../../lib/useProductImport";
 import { MAX_POLL_MEDIA } from "../../lib/types";
-import { detectProductUrl, LIMITS } from "../../lib/validation";
+import {
+  canonicalPollProductUrl,
+  detectProductImportUrl,
+  LIMITS,
+  parseProductUrl,
+} from "../../lib/validation";
 import { Banner, Button } from "../kit";
 import { SocialIcon } from "../SocialIcon";
 import { ThemeSurface } from "../ThemeSurface";
 import { useTheme } from "../theme";
 import { CreationIconButton } from "./CreationIconButton";
 import { ProductEditSheet } from "./ProductEditSheet";
+import { ProductImportManualForm } from "./ProductImportManualForm";
 import {
   domainFor,
   ProductPreviewCard,
   PreviewSkeleton,
 } from "./ProductPreviewCard";
-import { mediaFor, pickMedia, type UpdateProduct } from "./productMedia";
-
-const retailerNames: Record<string, string> = {
-  myntra: "Myntra",
-  ajio: "AJIO",
-  meesho: "Meesho",
-  hm: "H&M",
-  zara: "Zara",
-  amazon: "Amazon",
-  flipkart: "Flipkart",
-};
+import {
+  mediaFor,
+  pickMedia,
+  pickProductPhoto,
+  type UpdateProduct,
+} from "./productMedia";
 
 function mergePreview(
   product: ProductDraft,
   media: CreationMedia[],
   result: ProductPreview,
   url: string,
+  importSource: NonNullable<ProductDraft["importSource"]>,
   incomingImage?: CreationMedia,
 ): [ProductDraft, CreationMedia[]] {
-  if (detectProductUrl(product.url) !== url) return [product, media];
+  if (detectProductImportUrl(product.url) !== url) return [product, media];
   const manual = new Set(product.manual);
+  const preferComplete =
+    product.importSource === "manual" && importSource !== "manual";
   const fields = { ...product.fields };
   const fetched = productFields({
     description: result.description,
@@ -53,7 +55,13 @@ function mergePreview(
     price: result.price ?? undefined,
   });
   for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
-    if (fetched[key] && !manual.has(key) && !fields[key]) {
+    if (
+      fetched[key] &&
+      !manual.has(key) &&
+      (!fields[key] ||
+        preferComplete ||
+        (key === "currency" && result.price && !product.fields.price))
+    ) {
       fields[key] = fetched[key];
     }
   }
@@ -64,24 +72,35 @@ function mergePreview(
     media.length < MAX_POLL_MEDIA
       ? incomingImage
       : undefined;
-  const source = detectProductUrl(result.productUrl) ?? url;
+  const source = canonicalPollProductUrl(result.productUrl) ?? url;
   const original =
     result.originalPrice ?? result.intelligence?.product.price?.original;
   return [
     {
       ...product,
       fields,
-      name: manual.has("name") ? product.name : product.name || result.name,
+      name:
+        manual.has("name") ||
+        (!preferComplete && product.name && product.name !== product.titleHint)
+          ? product.name
+          : result.name || product.name,
       retailer: manual.has("retailer")
         ? product.retailer
         : product.retailer ||
-          retailerNames[result.platform] ||
           result.intelligence?.source.site_name ||
           domainFor(source),
       originalPrice: manual.has("originalPrice")
         ? product.originalPrice
         : product.originalPrice || (original ? String(original) : undefined),
       resolvedUrl: url,
+      canonicalUrl: source,
+      importSource,
+      importFailure:
+        importSource === "manual" ? product.importFailure : undefined,
+      importedImageUrl:
+        manual.has("image") || incoming
+          ? undefined
+          : result.imageUrl || product.importedImageUrl,
       intelligence: result.intelligence ?? product.intelligence,
       mediaIds: incoming
         ? [incoming.id, ...product.mediaIds]
@@ -100,27 +119,6 @@ export function hasProductPreview(
     product.manualPreview ||
     mediaFor(product, media).length
   );
-}
-
-function previewFailureMessage(error: unknown): string | undefined {
-  if (!(error instanceof ProductPreviewError)) return;
-  switch (error.code) {
-    case "IMPORTER_NOT_CONFIGURED":
-      return "Automatic previews haven’t been set up for this app build.";
-    case "IMPORTER_UNAVAILABLE":
-      return "The product preview service is temporarily unavailable.";
-    case "AUTH_REQUIRED":
-      return "Sign in to fetch product details.";
-    case "ACCESS_RESTRICTED":
-      return "The store blocked automatic access for this link.";
-    case "POLICY_TIMEOUT":
-    case "POLICY_UNAVAILABLE":
-      return "We couldn’t check whether the store allows automatic previews.";
-    case "PRODUCT_NOT_FOUND":
-      return "This product page is no longer available.";
-    case "RATE_LIMITED":
-      return "Too many preview requests. Try again in a moment.";
-  }
 }
 
 export function ProductEditor({
@@ -145,164 +143,72 @@ export function ProductEditor({
   const { colors, mode, type, creation: tokens } = useTheme();
   const [attempt, setAttempt] = useState<{ url: string; key: number }>();
   const [focus, setFocus] = useState(false);
-  const [request, setRequest] = useState<{
-    url: string;
-    phase: "loading" | "enriching" | "done" | "failed";
-    message?: string;
-  }>();
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
+  const [pauseImport, setPauseImport] = useState(false);
   const picking = useRef(false);
   const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
-  const latest = useRef({ product, update });
-  useEffect(() => {
-    latest.current = { product, update };
-  }, [product, update]);
-
-  const url = detectProductUrl(product.url);
-  const currentPhase = request?.url === url ? request?.phase : undefined;
+  const url = detectProductImportUrl(product.url);
   const hasPreview = hasProductPreview(product, media);
-  const attemptKey = attempt?.url === url ? attempt?.key : undefined;
-
-  useEffect(() => {
-    if (
-      !url ||
-      disabled ||
-      (!attemptKey && latest.current.product.resolvedUrl === url)
-    )
-      return;
-
-    const controller = new AbortController();
-    const signal = controller.signal;
-    const timer = setTimeout(
-      () => {
-        setRequest({ url, phase: "loading" });
-        const timeout = setTimeout(() => {
-          setRequest((state) =>
-            state?.phase === "loading"
-              ? {
-                  url,
-                  phase: "failed",
-                  message: "The preview request timed out.",
-                }
-              : { url, phase: "done" },
-          );
-          controller.abort();
-        }, 30000);
-        const relevant = () =>
-          !signal.aborted &&
-          detectProductUrl(latest.current.product.url) === url;
-        const usable = (result: ProductPreview) =>
-          !!(result.name || result.images.length);
-        const apply = (result: ProductPreview) => {
-          const image = result.images[0];
-          const incoming: CreationMedia | undefined = image
-            ? {
-                id: randomUUID(),
-                kind: "image",
-                file: productPhoto(image),
-                sourceUrl: url,
-              }
-            : undefined;
-          if (relevant())
-            latest.current.update((p, m) =>
-              mergePreview(p, m, result, url, incoming),
-            );
-        };
-        void (async () => {
-          let preview: ProductPreview | undefined;
-          try {
-            preview = await getProductPreview(
-              url,
-              signal,
-              !!attemptKey,
-              "rich",
-            );
-          } catch (error) {
-            if (relevant())
-              setRequest({
-                url,
-                phase: "failed",
-                message: previewFailureMessage(error),
-              });
-            return;
+  const {
+    phase: currentPhase,
+    deviceUrl,
+    finishDevice,
+  } = useProductImport({
+    url,
+    enabled: visible && !disabled && !pauseImport,
+    attempt,
+    resolvedUrl: product.resolvedUrl,
+    onPreview(result, source, link) {
+      const image = result.images[0];
+      const incoming = image
+        ? {
+            id: randomUUID(),
+            kind: "image" as const,
+            file: productPhoto(image),
+            sourceUrl: parseProductUrl(link) ?? undefined,
           }
-          if (!relevant()) return;
+        : undefined;
+      update((p, m) => mergePreview(p, m, result, link, source, incoming));
+    },
+    onManual(link, code) {
+      update((p, m) =>
+        detectProductImportUrl(p.url) !== link
+          ? [p, m]
+          : [
+              {
+                ...p,
+                resolvedUrl: link,
+                importSource: "manual",
+                importFailure: code,
+                name: p.manual?.includes("name")
+                  ? p.name
+                  : p.name || p.titleHint || "",
+                fields: { ...p.fields, currency: p.fields.currency || "INR" },
+              },
+              m,
+            ],
+      );
+    },
+  });
 
-          const initialPreview = !!preview && usable(preview);
-          if (preview && initialPreview) {
-            apply(preview);
-            setRequest({ url, phase: "enriching" });
-          }
-          let found = initialPreview;
-          try {
-            const details = await getProductPreview(
-              url,
-              signal,
-              false,
-              "enrichment",
-            );
-            if (details.name || initialPreview) {
-              apply(details);
-              found = true;
-              if (relevant()) setRequest({ url, phase: "enriching" });
-            }
-            const initialCandidates =
-              preview?.intelligence?.product.images.map((i) => i.url) ?? [];
-            const newCandidates = details.intelligence?.product.images.some(
-              (i) => !initialCandidates.includes(i.url),
-            );
-            if (
-              !preview?.images.length &&
-              details.imagesPending &&
-              (!initialPreview || newCandidates)
-            ) {
-              const enriched = await getProductPreview(
-                url,
-                signal,
-                false,
-                "enriched-preview",
-              );
-              if (usable(enriched)) {
-                apply(enriched);
-                found = true;
-              }
-            }
-          } catch {
-            // A usable preview stays visible when optional details are unavailable.
-          }
-          if (relevant()) setRequest({ url, phase: found ? "done" : "failed" });
-        })().finally(() => clearTimeout(timeout));
-        signal.addEventListener("abort", () => clearTimeout(timeout), {
-          once: true,
-        });
-      },
-      attemptKey ? 0 : 400,
-    );
-
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [url, attemptKey, disabled]);
+  const loading = currentPhase === "loading" || currentPhase === "device";
+  const showManual =
+    !loading && (product.importSource === "manual" || pauseImport);
+  const previewBlocked = !!product.importFailure && product.resolvedUrl === url;
 
   function changeLink(value: string) {
-    const next = detectProductUrl(value);
-    const previous = detectProductUrl(product.url);
+    const next = detectProductImportUrl(value);
+    const previous = detectProductImportUrl(product.url);
     setError("");
     if (next !== previous || !value) {
       setAttempt(undefined);
-      setRequest(undefined);
-      // Invalidate callbacks immediately, before the next render commits.
-      latest.current = {
-        ...latest.current,
-        product: { ...product, url: value },
-      };
+      if (showManual) setPauseImport(true);
     }
     update((p, m) => {
-      if (next === detectProductUrl(p.url) && value)
+      if (next === detectProductImportUrl(p.url) && value)
         return [{ ...p, url: value }, m];
-      const hasSource = !!(p.resolvedUrl || detectProductUrl(p.url));
+      const hasSource = !!(p.resolvedUrl || detectProductImportUrl(p.url));
       if (!hasSource) return [{ ...p, url: value }, m];
       const removed = new Set(
         p.mediaIds.filter((id) =>
@@ -310,7 +216,9 @@ export function ProductEditor({
         ),
       );
       const manual = new Set(p.manual);
-      const fields = productFields();
+      const fields = productFields(
+        showManual ? { currency: "INR" } : undefined,
+      );
       (Object.keys(fields) as (keyof typeof fields)[]).forEach((key) => {
         if (manual.has(key)) fields[key] = p.fields[key];
       });
@@ -319,12 +227,17 @@ export function ProductEditor({
           ...p,
           url: value,
           name: manual.has("name") ? p.name : "",
+          titleHint: undefined,
           fields,
           retailer: manual.has("retailer") ? p.retailer : undefined,
           originalPrice: manual.has("originalPrice")
             ? p.originalPrice
             : undefined,
           resolvedUrl: undefined,
+          canonicalUrl: undefined,
+          importSource: showManual ? "manual" : undefined,
+          importFailure: undefined,
+          importedImageUrl: undefined,
           intelligence: undefined,
           mediaIds: p.mediaIds.filter((id) => !removed.has(id)),
         },
@@ -335,7 +248,7 @@ export function ProductEditor({
 
   async function pasteLink() {
     try {
-      const value = detectProductUrl(await Clipboard.getStringAsync());
+      const value = detectProductImportUrl(await Clipboard.getStringAsync());
       if (value) {
         changeLink(value);
         return;
@@ -352,27 +265,52 @@ export function ProductEditor({
       setError("Enter a valid public product link.");
       return;
     }
-    if (
-      currentPhase === "loading" ||
-      currentPhase === "enriching" ||
-      currentPhase === "done" ||
-      product.resolvedUrl === url
-    )
-      return;
+    if (currentPhase === "loading" || currentPhase === "device") return;
     setError("");
-    setRequest({ url, phase: "loading" });
-    setAttempt({ url, key: (attemptKey ?? 0) + 1 });
+    setPauseImport(false);
+    setAttempt({ url, key: (attempt?.key ?? 0) + 1 });
   }
 
-  async function append(initialUpload = false) {
-    if (picking.current || media.length >= MAX_POLL_MEDIA) return;
+  function previewLink() {
+    if (!previewBlocked) retry();
+  }
+
+  function editManually() {
+    if (
+      url &&
+      product.importSource !== "server" &&
+      product.importSource !== "device"
+    ) {
+      setPauseImport(true);
+      update((p, m) => [
+        {
+          ...p,
+          resolvedUrl: url,
+          importSource: "manual",
+          fields: { ...p.fields, currency: p.fields.currency || "INR" },
+        },
+        m,
+      ]);
+      return;
+    }
+    setEditing(true);
+  }
+
+  async function append(initialUpload = false, source?: ProductPhotoSource) {
+    if (
+      picking.current ||
+      (media.length >= MAX_POLL_MEDIA &&
+        !mediaFor(product, media).some((item) => item.kind === "image"))
+    )
+      return;
     picking.current = true;
     try {
-      const photos = await pickMedia(1, initialUpload && allowInitialVideo);
-      if (!photos.length) return;
+      const photo = source
+        ? await pickProductPhoto(source)
+        : (await pickMedia(1, initialUpload && allowInitialVideo))[0];
+      if (!photo) return;
       update((p, m) => {
         const cover = mediaFor(p, m).find((item) => item.kind === "image");
-        const photo = photos[0];
         if (!cover && m.length >= MAX_POLL_MEDIA) return [p, m];
         return [
           {
@@ -382,6 +320,7 @@ export function ProductEditor({
               ...p.mediaIds.filter((id) => id !== cover?.id),
             ],
             manualPreview: p.manualPreview || !p.url,
+            importedImageUrl: undefined,
             manual: [...new Set([...(p.manual ?? []), "image"])],
           },
           [...m.filter((item) => item.id !== cover?.id), photo],
@@ -401,8 +340,6 @@ export function ProductEditor({
   const placeholder = comparison
     ? "Paste another product link"
     : "Paste any product link";
-  const loading = currentPhase === "loading";
-  const unavailable = currentPhase === "failed" && !hasPreview;
   return (
     <View style={{ gap: 10 }}>
       <ThemeSurface
@@ -441,7 +378,7 @@ export function ProductEditor({
           editable={!disabled}
           value={product.url}
           onChangeText={changeLink}
-          onSubmitEditing={retry}
+          onSubmitEditing={previewLink}
           onFocus={() => setFocus(true)}
           onBlur={() => setFocus(false)}
           style={[styles.linkInput, { color: colors.ink }]}
@@ -459,41 +396,32 @@ export function ProductEditor({
         ) : null}
         <Button
           label="Preview"
-          disabled={disabled || loading}
+          disabled={disabled || loading || previewBlocked}
           style={styles.previewButton}
-          onPress={retry}
+          onPress={previewLink}
         />
       </ThemeSurface>
       {error ? <Banner kind="error">{error}</Banner> : null}
       {loading && !hasPreview ? <PreviewSkeleton /> : null}
-      {unavailable ? (
-        <View style={{ gap: 2 }}>
-          <Text accessibilityRole="alert" style={type.small}>
-            {request?.message ?? "We couldn’t load a preview for this link."}
-          </Text>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            <Button
-              label="Try again"
-              variant="quiet"
-              disabled={disabled}
-              onPress={retry}
-            />
-            <Button
-              label="Add manually"
-              variant="quiet"
-              disabled={disabled}
-              onPress={() => setEditing(true)}
-            />
-            <Button
-              label="Upload photo"
-              variant="quiet"
-              disabled={disabled || media.length >= MAX_POLL_MEDIA}
-              onPress={() => void append()}
-            />
-          </View>
-        </View>
+      {showManual ? (
+        <ProductImportManualForm
+          product={product}
+          media={media}
+          update={update}
+          disabled={disabled}
+          onPhoto={(source) => void append(false, source)}
+          onRetry={retry}
+        />
       ) : null}
-      {!hasPreview && !loading && !unavailable ? (
+      {!hasPreview && !showManual ? (
+        <Button
+          label="Add manually"
+          variant="quiet"
+          disabled={disabled}
+          onPress={editManually}
+        />
+      ) : null}
+      {!hasPreview && !loading && !showManual ? (
         <View
           style={{
             flexDirection: "row",
@@ -526,11 +454,11 @@ export function ProductEditor({
           </Pressable>
         </View>
       ) : null}
-      {hasPreview && !comparison ? (
+      {hasPreview && !comparison && !showManual ? (
         <ProductPreviewCard
           product={product}
           media={media}
-          onEdit={disabled ? undefined : () => setEditing(true)}
+          onEdit={disabled ? undefined : editManually}
           onPhoto={
             disabled || media.length >= MAX_POLL_MEDIA
               ? undefined
@@ -538,14 +466,14 @@ export function ProductEditor({
           }
         />
       ) : null}
-      {hasPreview && comparisonWith ? (
+      {hasPreview && comparisonWith && !showManual ? (
         <View style={{ flexDirection: "row", gap: 8 }}>
           <ProductPreviewCard compact product={comparisonWith} media={media} />
           <ProductPreviewCard
             compact
             product={product}
             media={media}
-            onEdit={disabled ? undefined : () => setEditing(true)}
+            onEdit={disabled ? undefined : editManually}
             onPhoto={
               disabled || media.length >= MAX_POLL_MEDIA
                 ? undefined
@@ -553,6 +481,13 @@ export function ProductEditor({
             }
           />
         </View>
+      ) : null}
+      {deviceUrl ? (
+        <ProductWebViewImporter
+          key={deviceUrl}
+          url={deviceUrl}
+          onFinish={finishDevice}
+        />
       ) : null}
       {editing ? (
         <ProductEditSheet

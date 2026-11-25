@@ -3,10 +3,15 @@ import type { ProductFields } from "./productDetails";
 export type ProductDraft = {
   id: string;
   name: string;
+  titleHint?: string;
   url: string;
   fields: ProductFields;
   mediaIds: string[];
   resolvedUrl?: string;
+  canonicalUrl?: string;
+  importSource?: import("./types").NewPollInput["importSource"];
+  importFailure?: import("./productImportTiers").ProductImportCode;
+  importedImageUrl?: string;
   originalPrice?: string;
   retailer?: string;
   manualPreview?: boolean;

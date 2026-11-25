@@ -33,7 +33,17 @@ Open **Profile â†’ Edit profile** to set your username, photo, and bio. The
 
 Use the star on a poll or reel to add or remove your reaction. A poll gallery can mix up to 24 photos and MP4 videos. Photos keep their dimensions, are re-encoded as JPEG up to 15 MB, and open in a full-size viewer. MP4 videos can be up to 20 MB each. Paste a product URL or retailer share message into the link field to import any available gallery, name, and INR price. Each imported photo has a View product button. If a retailer makes its previews unavailable, the link can still be saved and photos can be added manually.
 
-Expo's local server handles previews on the same port. For hosted builds, run `npm run import:server` behind an HTTPS endpoint and set `EXPO_PUBLIC_PRODUCT_IMPORT_URL` to that endpoint's origin before building. If the web app is on a different origin, set `PRODUCT_IMPORT_ORIGIN` to its origin on the importer.
+Expo's local development server handles previews on the same port. For release builds, run `npm run import:server` behind an HTTPS endpoint and verify that `GET /api/health` returns `{"status":"ok"}`. Set `PRODUCT_IMPORT_ORIGIN` on the importer if the web app uses a different origin.
+
+Set the public origin in EAS before building. Replace `https://importer.example.com` with the deployed importer origin.
+
+```sh
+npx eas-cli@latest env:set --name EXPO_PUBLIC_IMPORTER_URL --value https://importer.example.com --environment preview --visibility plaintext
+npx eas-cli@latest env:set --name EXPO_PUBLIC_IMPORTER_URL --value https://importer.example.com --environment production --visibility plaintext
+npx eas-cli@latest build --platform android --profile production-apk
+```
+
+For a preview APK use `--profile preview`. For a local build set `EXPO_PUBLIC_IMPORTER_URL` in `.env`. Native release builds include WebView and Android sharing support. Missing importer configuration opens the on-device or manual flow.
 
 ## Share a product into Worth It on Android
 

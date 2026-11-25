@@ -3,10 +3,21 @@ import { productPreviewOrigin } from "./productPreviewOrigin";
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 import { MAX_POLL_MEDIA } from "./types";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  cachedDeviceTier,
+  hostTierTtl,
+  importCode,
+  nextProductImportTier,
+  type ProductImportCode,
+} from "./productImportTiers";
 
 export class ProductPreviewError extends Error {
-  constructor(readonly code: string) {
+  readonly code: ProductImportCode;
+
+  constructor(code: ProductImportCode) {
     super(code);
+    this.code = code;
     this.name = "ProductPreviewError";
   }
 }
@@ -83,20 +94,24 @@ export interface ProductPreview {
   originalPrice?: number;
   limited?: boolean;
   warning?: string;
+  imageUrl?: string;
+  code?: ProductImportCode;
 }
-function previewOrigin() {
+const origin = (() => {
   try {
-    return productPreviewOrigin(
-      process.env.EXPO_PUBLIC_PRODUCT_IMPORT_URL,
+    const resolved = productPreviewOrigin(
+      process.env.EXPO_PUBLIC_IMPORTER_URL,
       __DEV__,
       Platform.OS,
       Constants.expoConfig?.hostUri,
       Platform.OS === "web" ? globalThis.location?.origin : undefined,
     );
+    if (__DEV__) console.info("Product importer origin", resolved);
+    return resolved;
   } catch {
-    throw new ProductPreviewError("IMPORTER_NOT_CONFIGURED");
+    return null;
   }
-}
+})();
 
 export function productPhoto(image: ProductImage) {
   return {
@@ -107,6 +122,66 @@ export function productPhoto(image: ProductImage) {
 const clonePreview = (value: ProductPreview): ProductPreview =>
   JSON.parse(JSON.stringify(value));
 const cached = new Map<string, { until: number; value: ProductPreview }>();
+
+export function hasAutomaticProductDetails(preview: ProductPreview) {
+  return !!(preview.name && (preview.price || preview.images.length || preview.imageUrl));
+}
+
+const hostTierKey = "product-import:device-hosts";
+let hostTierWork: Promise<unknown> = Promise.resolve();
+
+function withHostTiers<T>(use: (entries: Map<string, number>) => Promise<T> | T): Promise<T> {
+  const work = hostTierWork.then(async () => {
+    let data: [string, number][] = [];
+    try {
+      const saved = JSON.parse((await AsyncStorage.getItem(hostTierKey)) ?? "[]");
+      if (Array.isArray(saved)) data = saved.filter((entry) =>
+        Array.isArray(entry) && typeof entry[0] === "string" &&
+        typeof entry[1] === "number" && cachedDeviceTier(String(entry[1])));
+    } catch { /* Unavailable storage leaves normal tier ordering in place. */ }
+    return use(new Map(data.slice(-32)));
+  });
+  hostTierWork = work.catch(() => {});
+  return work;
+}
+
+const hostOf = (url: string) => new URL(url).hostname.toLowerCase();
+const saveHostTiers = (hosts: Map<string, number>) =>
+  AsyncStorage.setItem(hostTierKey, JSON.stringify([...hosts].slice(-32))).catch(() => {});
+
+export async function rememberDeviceProductImport(url: string) {
+  await withHostTiers((hosts) => {
+    const host = hostOf(url);
+    hosts.delete(host);
+    hosts.set(host, Date.now() + hostTierTtl);
+    return saveHostTiers(hosts);
+  });
+}
+
+export async function startProductImport(url: string, signal: AbortSignal, refresh = false) {
+  const native = Platform.OS !== "web";
+  const host = hostOf(url);
+  if (native && !refresh) {
+    const preference = await withHostTiers((hosts) => hosts.has(host));
+    signal.throwIfAborted();
+    if (preference) return { tier: "device", code: "CLIENT_IMPORT_REQUIRED" } as const;
+  }
+  try {
+    const preview = await getProductPreview(url, signal, refresh);
+    if (hasAutomaticProductDetails(preview)) {
+      void withHostTiers((hosts) => {
+        if (hosts.delete(host)) return saveHostTiers(hosts);
+      });
+      return { tier: "server", preview } as const;
+    }
+    const code = preview.code ?? "PARTIAL_EXTRACTION";
+    return { tier: nextProductImportTier(code, native), preview, code } as const;
+  } catch (error) {
+    signal.throwIfAborted();
+    const code = error instanceof ProductPreviewError ? error.code : "UNKNOWN";
+    return { tier: nextProductImportTier(code, native), code } as const;
+  }
+}
 type PreviewMode = "rich" | "enrichment" | "enriched-preview" | "full";
 const pending = new Map<
   string,
@@ -124,7 +199,7 @@ export async function getProductPreview(
   mode: PreviewMode = "full",
 ): Promise<ProductPreview> {
   signal.throwIfAborted();
-  const key = url + "|" + mode;
+  const key = url + "|" + mode + (refresh ? "|refresh" : "");
   let request = pending.get(key);
   if (!request) {
     const controller = new AbortController();
@@ -168,7 +243,6 @@ async function fetchProductPreview(
   refresh: boolean,
   mode: PreviewMode,
 ): Promise<ProductPreview> {
-  const origin = previewOrigin();
   if (!origin) throw new ProductPreviewError("IMPORTER_NOT_CONFIGURED");
   if (refresh)
     for (const entry of cached.keys())
@@ -196,16 +270,14 @@ async function fetchProductPreview(
     signal,
   }).catch((error) => {
     if (signal.aborted) throw error;
-    throw new ProductPreviewError("IMPORTER_UNAVAILABLE");
+    throw new ProductPreviewError("NETWORK_ERROR");
   });
   const body = await response.json().catch(() => null);
-  if (response.status === 401) throw new ProductPreviewError("AUTH_REQUIRED");
-  if (response.status === 429) throw new ProductPreviewError("RATE_LIMITED");
   if (!body || response.status >= 500)
-    throw new ProductPreviewError("IMPORTER_UNAVAILABLE");
-  if (!response.ok || !Array.isArray(body.images))
+    throw new ProductPreviewError("NETWORK_ERROR");
+  if (!Array.isArray(body.images) || (!response.ok && response.status !== 422))
     throw new ProductPreviewError(
-      typeof body.code === "string" ? body.code : "EXTRACTION_FAILED",
+      importCode(body.code),
     );
   let bytes = 0;
   const images: ProductImage[] = body.images
@@ -239,6 +311,8 @@ async function fetchProductPreview(
     productUrl: text("productUrl", 2048),
     platform: text("platform", 30),
     images,
+    imageUrl: text("imageUrl", 2048) || undefined,
+    code: body.code == null ? undefined : importCode(body.code),
     intelligence:
       body.schema_version === 2 &&
       body.product &&
@@ -265,15 +339,14 @@ async function fetchProductPreview(
   };
   if (
     !images.length &&
+    !value.imageUrl &&
     !value.name &&
     value.price === null &&
     !value.description &&
     !value.brand &&
     !value.warning
   )
-    throw new Error(
-      "This store did not share a product preview. Add details and photos manually.",
-    );
+    throw new ProductPreviewError(value.code ?? "PARTIAL_EXTRACTION");
   // Keep a bounded cache for both comparison slots and their metadata.
   if (cached.size >= 4) cached.delete(cached.keys().next().value!);
   cached.set(key, {

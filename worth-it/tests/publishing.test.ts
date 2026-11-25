@@ -127,6 +127,15 @@ test("repeated successful submissions return the existing post", async () => {
   assert.equal(f.state.uploads, 1);
 });
 
+test("poll publication records each tier and leaves legacy inserts compatible", async () => {
+  for (const importSource of ["server", "device", "manual", undefined] as const) {
+    const f = fixture();
+    await publishPoll(f.client, { ...input, importSource }, "owner", id, async () => new ArrayBuffer(2));
+    assert.equal(f.rows.get(id).import_source, importSource);
+    assert.equal(Object.hasOwn(f.rows.get(id), "import_source"), importSource !== undefined);
+  }
+});
+
 test("publish progress describes actual stages without pretending to measure bytes", async () => {
   const f = fixture();
   const stages: string[] = [];

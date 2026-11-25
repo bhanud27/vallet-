@@ -1,5 +1,5 @@
 import { normalizeProductDetails, type ProductDetails } from "./productDetails";
-import { parseProductUrl } from "./validation";
+import { canonicalPollProductUrl } from "./validation";
 export type CreationProduct = {
   id: string;
   name: string;
@@ -54,7 +54,7 @@ export function normalizeCreationSpec(
         throw new Error("An image cannot belong to two products.");
       media.add(i);
     }
-    const url = product.url ? parseProductUrl(product.url) : undefined;
+    const url = product.url ? canonicalPollProductUrl(product.url) : undefined;
     if (product.url && !url) throw new Error("Check the product link.");
     return {
       id: product.id,

@@ -1,6 +1,7 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { randomUUID } from 'expo-crypto';
 import { File, Paths } from 'expo-file-system';
+import { fetch as expoFetch } from 'expo/fetch';
 import { Platform } from 'react-native';
 import { AppError, PickedPhoto } from './types';
 
@@ -8,7 +9,53 @@ export const MAX_POLL_PHOTO_MB = 15;
 export const MAX_POLL_PHOTO_PIXELS = 60_000_000;
 const MAX_POLL_PHOTO_BYTES = MAX_POLL_PHOTO_MB * 1024 * 1024;
 
+async function withDownloadedProductPhoto<T>(url: string, consume: (source: string) => Promise<T>) {
+  const cancel = new AbortController();
+  const timeout = setTimeout(() => cancel.abort(), 8000);
+  let localUrl: string | undefined;
+  let file: File | undefined;
+  try {
+    const response = await expoFetch(url, { credentials: 'omit', redirect: 'error', signal: cancel.signal });
+    const type = response.headers.get('content-type')?.split(';')[0].toLowerCase();
+    if (!response.ok || !response.body || !type || !/^image\/(?:jpeg|png|webp|avif|gif)$/.test(type) ||
+      Number(response.headers.get('content-length')) > MAX_POLL_PHOTO_BYTES) throw new Error('Invalid photo');
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_POLL_PHOTO_BYTES) throw new Error('Photo too large');
+      chunks.push(value);
+    }
+    if (!size) throw new Error('Empty photo');
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    if (Platform.OS === 'web') localUrl = URL.createObjectURL(new Blob([bytes], { type }));
+    else {
+      file = new File(Paths.cache, `product-${randomUUID()}.${type.split('/')[1]}`);
+      file.create();
+      await file.write(bytes);
+      localUrl = file.uri;
+    }
+  } catch {
+    throw new AppError('upload_failed', 'This product photo could not be downloaded. Replace it or remove it and try again.');
+  } finally {
+    clearTimeout(timeout);
+    cancel.abort();
+    if (!localUrl && file?.exists) file.delete();
+  }
+  try { return await consume(localUrl); }
+  finally {
+    if (file?.exists) file.delete();
+    else if (Platform.OS === 'web') URL.revokeObjectURL(localUrl);
+  }
+}
+
 async function withSource<T>(uri: string, consume: (source: string) => Promise<T>) {
+  if (/^https:\/\//i.test(uri)) return withDownloadedProductPhoto(uri, consume);
   const inline = Platform.OS !== 'web' ? /^data:image\/(jpeg|png|webp);base64,(.+)$/.exec(uri) : null;
   const temporary = inline ? new File(Paths.cache, `product-${randomUUID()}.${inline[1]}`) : null;
   try {

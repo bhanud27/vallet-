@@ -1,10 +1,12 @@
 import { useFocusEffect } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { Linking, Pressable, Text, View } from "react-native";
+import { ProductWebViewImporter } from "../components/ProductWebViewImporter";
 import { formatInr, timeAgo } from "../lib/format";
 import { repo } from "../lib/repo";
 import { Poll, PurchaseStatus, PurchaseUpdate } from "../lib/types";
-import { LIMITS, parsePrice } from "../lib/validation";
+import { detectProductImportUrl, LIMITS, parsePrice } from "../lib/validation";
+import { manualProductMessage, useProductImport } from "../lib/useProductImport";
 import { Banner, Button, Field } from "./kit";
 import { useTheme } from "./theme";
 
@@ -133,6 +135,19 @@ function UpdateForm({
   const [affiliate, setAffiliate] = useState(existing?.isAffiliate ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState<{ url: string; key: number }>();
+  const [priceHint, setPriceHint] = useState<number | null>(null);
+  const link = detectProductImportUrl(url);
+  const { phase, deviceUrl, finishDevice } = useProductImport({
+    url: link,
+    enabled: status === "bought" && !busy && !!attempt && attempt.url === link,
+    attempt,
+    onPreview(preview, _source, requestUrl) {
+      if (requestUrl === link && preview.currency === "INR" && preview.price && Number.isInteger(preview.price))
+        setPriceHint(preview.price);
+    },
+    onManual() {},
+  });
 
   async function save() {
     if (!status) return setError("Choose Bought, Passed, or Returned first.");
@@ -249,12 +264,26 @@ function UpdateForm({
             testID="url-input"
             label="Store link (optional)"
             value={url}
-            onChangeText={setUrl}
+            onChangeText={(value) => {
+              setUrl(value);
+              setAttempt(undefined);
+              setPriceHint(null);
+            }}
             autoCapitalize="none"
             keyboardType="url"
             autoComplete="off"
             placeholder="https://example.com/product"
           />
+          {link ? (
+            <Button variant="quiet" label="Look up store price"
+              disabled={busy || phase === "loading" || phase === "device"}
+              onPress={() => setAttempt({ url: link, key: (attempt?.key ?? 0) + 1 })} />
+          ) : null}
+          {phase === "failed" ? <Text style={type.small}>{manualProductMessage}</Text> : null}
+          {priceHint && phase !== "loading" && phase !== "device" ? (
+            <Button variant="quiet" disabled={busy} label={`Use ${formatInr(priceHint)} as the price paid`}
+              onPress={() => { setPaid(String(priceHint)); setPriceHint(null); }} />
+          ) : null}
           <Pressable
             testID="affiliate-toggle"
             accessibilityRole="checkbox"
@@ -303,6 +332,7 @@ function UpdateForm({
           {error}
         </Banner>
       ) : null}
+      {deviceUrl ? <ProductWebViewImporter key={deviceUrl} url={deviceUrl} onFinish={finishDevice} /> : null}
       <Button
         testID="save-update"
         label={busy ? "Saving…" : existing ? "Save changes" : "Post update"}

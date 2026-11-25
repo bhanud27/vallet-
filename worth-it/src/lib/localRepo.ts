@@ -18,7 +18,7 @@ import {
 } from "./types";
 import {
   normaliseUpdate,
-  parseProductUrl,
+  canonicalPollProductUrl,
   validatePoll,
   validateUpdate,
   validateVote,
@@ -401,6 +401,7 @@ export function createLocalRepo(deps: LocalDeps): Repo {
       }
       const poll: StoredPoll = {
         contentKind: input.contentKind ?? "poll",
+        importSource: input.importSource,
         productDetails: normalizeProductDetails(input.productDetails),
         creationSpec: normalizeCreationSpec(input.creationSpec),
         id: input.requestId || uuid(),
@@ -416,7 +417,7 @@ export function createLocalRepo(deps: LocalDeps): Repo {
         demoImage: null,
         isDemo: false,
         createdAt: iso(now()),
-        productUrl: input.productUrl ? parseProductUrl(input.productUrl) : null,
+        productUrl: input.productUrl ? canonicalPollProductUrl(input.productUrl) : null,
         ...(media.length ? { media } : {}),
       };
       s.polls.push(poll);

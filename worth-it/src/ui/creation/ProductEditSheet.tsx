@@ -47,6 +47,7 @@ export function ProductEditSheet({
     >
   >({});
   const [photo, setPhoto] = useState<CreationMedia>();
+  const [removeImported, setRemoveImported] = useState(false);
   const [error, setError] = useState("");
   const picking = useRef(false);
   const existing = mediaFor(product, media).find(
@@ -57,7 +58,11 @@ export function ProductEditSheet({
   function save() {
     const { name, retailer, originalPrice, ...fields } = edits;
     try {
-      productDetails({ ...product.fields, ...fields });
+      const details = productDetails({ ...product.fields, ...fields });
+      if (product.importSource === "manual") {
+        if (!(name ?? product.name).trim()) throw new Error("Add a product title.");
+        if (!details?.price) throw new Error("Enter a product price greater than zero.");
+      }
       productDetails({ ...productFields(), price: originalPrice ?? "" });
       update((p, m) => {
         const cover = mediaFor(p, m).find((item) => item.kind === "image");
@@ -75,11 +80,12 @@ export function ProductEditSheet({
                 ? p.originalPrice
                 : originalPrice.trim(),
             manualPreview: true,
+            importedImageUrl: replace || removeImported ? undefined : p.importedImageUrl,
             manual: [
               ...new Set([
                 ...(p.manual ?? []),
                 ...Object.keys(edits),
-                ...(replace ? ["image"] : []),
+                ...(replace || removeImported ? ["image"] : []),
               ]),
             ],
             mediaIds: replace
@@ -147,9 +153,9 @@ export function ProductEditSheet({
               />
             </View>
             <View style={[styles.line, { gap: 8 }]}>
-              {photo || existing ? (
+              {photo || existing || (!removeImported && product.importedImageUrl) ? (
                 <Image
-                  source={{ uri: (photo ?? existing)!.file.uri }}
+                  source={{ uri: (photo ?? existing)?.file.uri ?? product.importedImageUrl }}
                   style={{
                     width: 48,
                     height: 48,
@@ -161,12 +167,15 @@ export function ProductEditSheet({
               ) : null}
               <Button
                 label={
-                  photo || existing ? "Replace photo" : "Upload product photo"
+                  photo || existing || (!removeImported && product.importedImageUrl) ? "Replace photo" : "Upload product photo"
                 }
                 variant="secondary"
                 disabled={!existing && media.length >= MAX_POLL_MEDIA}
                 onPress={() => void replacePhoto()}
               />
+              {product.importedImageUrl && !removeImported && !photo && !existing ? (
+                <Button label="Remove photo" variant="quiet" onPress={() => setRemoveImported(true)} />
+              ) : null}
             </View>
             <Field
               label="Product title"

@@ -6,7 +6,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const project = path.resolve(__dirname, "../..");
 const glossyOnly = process.env.GLOSSY_UI_ONLY === "1";
-const output = path.join(project, glossyOnly ? ".expo/glossy-ui-check" : process.env.SETTINGS_UI_ONLY === "1" ? ".expo/settings-ui-check" : process.env.CREATION_UI_ONLY === "1" ? ".expo/creation-ui-check" : ".expo/social-ui-check");
+const productFailureOnly = process.env.PRODUCT_IMPORT_FAILURE_UI_ONLY === "1";
+const fixtureImporter = "https://importer.example.com";
+const output = path.join(project, productFailureOnly ? ".expo/product-failure-ui-check" : glossyOnly ? ".expo/glossy-ui-check" : process.env.SETTINGS_UI_ONLY === "1" ? ".expo/settings-ui-check" : process.env.CREATION_UI_ONLY === "1" ? ".expo/creation-ui-check" : ".expo/social-ui-check");
 const regressionShots = path.join(project, ".expo/social-ui-shots");
 const shots = process.env.GLOSSY_SCREENSHOT_DIR || regressionShots;
 async function main() {
@@ -27,7 +29,7 @@ async function main() {
         EXPO_PUBLIC_SUPABASE_URL: "",
         EXPO_PUBLIC_SUPABASE_ANON_KEY: "",
         EXPO_PUBLIC_TURNSTILE_SITE_KEY: "",
-        EXPO_PUBLIC_PRODUCT_IMPORT_URL: "",
+        EXPO_PUBLIC_IMPORTER_URL: productFailureOnly ? fixtureImporter : "",
         EXPO_PUBLIC_WEB_URL: "",
       },
     },
@@ -96,7 +98,7 @@ async function main() {
       headless: true,
       ...(channel ? { channel } : {}),
     });
-    for (const [width, height] of [
+    for (const [width, height] of productFailureOnly ? [[390, 844]] : [
       ...(glossyOnly || process.env.CREATION_UI_ONLY === "1" ? [[320, 700]] : []),
       [390, 844],
       [414, 900],
@@ -122,6 +124,13 @@ async function main() {
         });
         await page.goto(base);
         await expect(page.getByTestId("mode-banner")).toBeVisible();
+        if (productFailureOnly) {
+          await require("./product-import-failure.cjs").verifyProductImportFailure({ page, base, fixtureImporter, expect });
+          expect(errors).toEqual([]);
+          await context.close();
+          console.log("Product import failure UI passed for every shared error code.");
+          continue;
+        }
         if (glossyOnly) {
           await require("./glossy-flows.cjs").verifyGlossy({ page, base, project, shots, width, expect });
           expect(errors).toEqual([]);

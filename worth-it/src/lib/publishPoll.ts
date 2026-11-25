@@ -155,6 +155,7 @@ export async function publishPoll(
       image_path: gallery.find((item) => item.kind === "image")?.value ?? null,
       media_gallery: gallery,
       ...(input.productUrl ? { product_url: input.productUrl } : {}),
+      ...(input.importSource ? { import_source: input.importSource } : {}),
       ...(input.category ? { category: input.category } : {}),
       ...(input.useCase?.trim() ? { use_case: input.useCase.trim() } : {}),
       ...(input.priority?.trim() ? { priority: input.priority.trim() } : {}),

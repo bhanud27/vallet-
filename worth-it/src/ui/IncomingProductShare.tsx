@@ -12,8 +12,9 @@ import { productShareInbox } from "../lib/incomingProductShare";
 export function IncomingProductShare({ canCreate }: { canCreate: boolean }) {
   const stack = useRootNavigationState();
   const pathname = usePathname();
-  const { sharedProductUrl } = useGlobalSearchParams<{
+  const { sharedProductUrl, sharedProductTitle } = useGlobalSearchParams<{
     sharedProductUrl?: string;
+    sharedProductTitle?: string;
   }>();
   const pending = useSyncExternalStore(
     productShareInbox.subscribe,
@@ -41,13 +42,14 @@ export function IncomingProductShare({ canCreate }: { canCreate: boolean }) {
       return;
     }
 
-    const params = { sharedProductUrl: pending.url };
+    const params = { sharedProductUrl: pending.url, sharedProductTitle: pending.titleHint ?? "" };
     if (pathname === "/add") {
-      if (sharedProductUrl !== pending.url) router.setParams(params);
+      if (sharedProductUrl !== pending.url || sharedProductTitle !== params.sharedProductTitle)
+        router.setParams(params);
     } else {
       router.navigate({ pathname: "/add", params });
     }
-  }, [canCreate, stack?.key, pending, pathname, sharedProductUrl]);
+  }, [canCreate, stack?.key, pending, pathname, sharedProductUrl, sharedProductTitle]);
 
   return null;
 }

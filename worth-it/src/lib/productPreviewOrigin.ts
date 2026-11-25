@@ -16,8 +16,15 @@ export function productPreviewOrigin(
     if (
       url.username ||
       url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash ||
       !["https:", "http:"].includes(url.protocol) ||
-      (!development && url.protocol !== "https:")
+      (!development &&
+        (url.protocol !== "https:" ||
+          !url.hostname.includes(".") ||
+          /^[\d.]+$/.test(url.hostname) ||
+          /\.(local|internal|localhost|home|lan)\.?$/i.test(url.hostname)))
     )
       throw new Error(
         "The product preview service needs a valid HTTPS address.",
@@ -35,6 +42,7 @@ export function productPreviewOrigin(
     }
     return url.origin;
   }
+  if (!development) return null;
   if (platform === "web") return webOrigin ?? null;
   if (development && hostUri)
     return new URL(hostUri.includes("://") ? hostUri : `http://${hostUri}`)

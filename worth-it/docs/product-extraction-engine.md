@@ -1,5 +1,7 @@
 # Worth It product extraction engine
 
+The app endpoint uses the richer importer for HTTPS product links. It validates a cover and uses configured providers to fill gaps in direct extraction. The existing HTTP parser, native WebView, and manual entry remain available. Current deployment commands are in the [README](../README.md).
+
 Implementation and verification: 21 November 2026. This extends the current Node importer and Expo composer. It does not replace the application, navigation, database, authentication, or media storage architecture.
 
 ## A. Diagnosis and root causes
@@ -93,7 +95,7 @@ module.exports = [{
 }];
 ```
 
-The URL must exactly match the requested product. Size, deadline and per-provider rate limits apply. No vendor/account, API endpoint, credential or paid plan is configured by this change. Test connectors in unit tests are synthetic. Paid access requires operator configuration and a license check; lower-priority providers are not called after useful data is returned.
+The returned URL binds the document to the requested retailer, product, market, and variant. A connector that observes a merchant offer can return its ISO timestamp as `offerObservedAt`. The importer uses that timestamp to expire the price. Size, deadline and per-provider rate limits apply. Paid access requires operator configuration and authorization.
 
 ## D. Retailer compatibility matrix
 
@@ -151,7 +153,7 @@ Copy the new `server/product-import.env.example` to ignored `server/product-impo
 | `PRODUCT_PROVIDER_MODULE` | Empty: no provider. Absolute path to reviewed connector module; vendor secrets stay in trusted server environment |
 | `PRODUCT_BROWSER_HOSTS` | Empty: disabled. Exact explicitly authorized retailer hosts only; never use to evade a denied page/policy |
 | `PRODUCT_BROWSER_CHANNEL` | Optional `chrome` or `msedge`; otherwise an installed Playwright Chromium binary is needed |
-| Existing `PRODUCT_IMPORT_ORIGIN`, `EXPO_PUBLIC_PRODUCT_IMPORT_URL`, `PORT` | Keep existing deployment origin/API URL/port behavior |
+| Existing `PRODUCT_IMPORT_ORIGIN`, `EXPO_PUBLIC_IMPORTER_URL`, `PORT` | Keep existing deployment origin/API URL/port behavior |
 
 No API keys are needed for default public metadata extraction. Browser rendering uses existing Playwright tooling when available. A production image with dev dependencies omitted must install a reviewed runtime Playwright package/browser before explicitly enabling rendering; otherwise it remains unavailable and manual entry works. Deploy an unprivileged sandboxed browser container with an enforced memory/CPU limit (for example 512MiB/one CPU) before enabling it. The code limits renderer JS heap, sessions, request count/bytes and wall time; those are **not OS-enforced memory/CPU quotas**.
 
@@ -173,7 +175,7 @@ No API keys are needed for default public metadata extraction. Browser rendering
 2. Keep your existing environment files. Optionally configure **only importer settings** in `server/product-import.env` from its example. Never copy database admin/service-role keys there.
 3. For production set `NODE_ENV=production`, configure public Supabase Auth settings and API origin, and allow only CDN hosts you are authorized to copy/store. Leave paid providers and browser rendering empty unless separately approved/configured.
 4. From the Worth It directory run `npm.cmd run import:server` (now reads `.env` plus optional `server/product-import.env`). The server listens on the existing port 8787 unless `PORT` is set. Put production behind HTTPS; do not expose Metro as the production API.
-5. Restart Expo/Metro to load the updated frontend. Existing logged-in sessions send bearer tokens automatically. For hosted builds, retain `EXPO_PUBLIC_PRODUCT_IMPORT_URL` pointing to the importer.
+5. Restart Expo/Metro to load the updated frontend. Existing logged-in sessions send bearer tokens automatically. For hosted builds, retain `EXPO_PUBLIC_IMPORTER_URL` pointing to the importer.
 6. Test Add → Poll with a permitted product link, edit a field while loading, inspect store facts/photos, and finish Opinion/Compare. Test Add → Post with a product link, inspect/import images or upload your own, edit details and publish. Try a blocked/invalid link and confirm manual completion still works. Verify both themes and existing floating navigation.
 7. Run the checks above. To test live links explicitly, use `npm.cmd run test:product-live -- "https://retailer.example/product"`. A restriction is an honest fallback result, not a reason to change TLS or bypass retailer controls.
 8. Monitor redacted JSON extraction logs for retailer, method, result/code, duration, cache state, missing fields, image counts, provider/browser usage and HTTP category. No product URL, bearer token, cookies, user profile, credential or vendor raw response is logged by the importer.
@@ -191,7 +193,7 @@ The Create entry point at /add opens the same composer used by the existing /new
 
 The client debounces URL changes, coalesces concurrent requests for the same URL and stage, and cancels stale requests. The importer shares the document cache across stages. Its rich response validates one cover image and returns the available identity fields. The optional details stage reuses the same retailer adapters and approved fallbacks, then fills gaps without overwriting manual edits. The original validated link supplies the View product destination, including variant parameters. If the importer cannot supply a usable preview, retry, manual entry, and photo upload remain available.
 
-The composer uses the existing `/api/product-preview` endpoint. It requests `mode: "rich"` for identity and the cover, then uses `detailsOnly: true` for optional metadata. If enrichment finds new image candidates, `mode: "enriched-preview"` validates one cover using that cached result. The endpoint still accepts the legacy full-gallery request.
+The composer requests a preview from `/api/product-preview` with `mode: "full"`. For HTTPS links the endpoint fills gaps in the direct result and validates one cover. The endpoint also accepts explicit rich and details-only requests.
 
 The existing URL and redirect policy, retailer access checks, image validation, rate limits, local draft store, upload pipeline, and publisher are reused. The link-preview Posts migration extends the existing Posts constraint to accept a validated product link as the attachment when a photo is missing. It uses the same publishing permissions and content checks as media-backed Posts.
 
@@ -264,12 +266,12 @@ The web rendering check sent product API requests directly to the local product-
 ### Android preview APK setup
 
 1. Run `npm run import:server` as a Node service behind HTTPS with `NODE_ENV=production`. Set `PRODUCT_AUTH_SUPABASE_URL` and `PRODUCT_AUTH_ANON_KEY` to the same Supabase project used by the app.
-2. Set `EXPO_PUBLIC_PRODUCT_IMPORT_URL` to that service's HTTPS origin and set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in the Expo **preview** environment. Rebuild the APK, sign in on the phone, and import an accessible product page to verify the connection.
+2. Set `EXPO_PUBLIC_IMPORTER_URL` to that service's HTTPS origin and set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in the Expo **preview** environment. Rebuild the APK, sign in on the phone, and import an accessible product page to verify the connection.
 3. For restricted retailers, configure an approved catalog connector with `PRODUCT_PROVIDER_MODULE`. Verify the exact product and variant, the current price and currency, and permission to display or copy the image. Verify real examples for each retailer before treating it as supported.
 
 ### Approved providers and local commands
 
-SerpApi's Google Product Result API exposes merchant links inside individual offers. The optional connector requires an exact retailer URL or product ID match in the same market and variant. That match gates title and available price. A thumbnail must be on an explicitly approved host and pass Worth It's normal image checks. Google may return no matching offer for an exact URL query. This was verified with fixtures. Live provider status was `PROVIDER_NOT_CONFIGURED` and no billable requests ran. [SerpApi product result documentation](https://serpapi.com/product-result)
+The optional SerpApi connector queries by retailer and product ID. It uses merchant links from organic results and product offers to match retailer, product ID, market, and variant. Exact matches can supply titles and thumbnails on approved hosts. Google search does not expose the merchant offer observation time required for current prices. [SerpApi organic results](https://serpapi.com/organic-results) · [SerpApi product results](https://serpapi.com/product-result)
 
 DataForSEO's Google Shopping search uses Google product IDs and documents deprecated seller product-page URL fields in its product search results. Those search results alone cannot establish an exact retailer variant. A DataForSEO connector was not enabled. [DataForSEO product search fields](https://docs.dataforseo.com/v3/merchant-google-products-task_get-advanced/) and [Merchant API overview](https://docs.dataforseo.com/v3/merchant-google-overview/)
 

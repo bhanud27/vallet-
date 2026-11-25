@@ -68,7 +68,7 @@ function createRetailerPolicy(fetchFile, config = {}) {
     8000,
     Math.max(
       1,
-      Number(config.timeout ?? process.env.PRODUCT_POLICY_TIMEOUT_MS) || 5000,
+      Number(config.timeout ?? process.env.PRODUCT_POLICY_TIMEOUT_MS) || 2000,
     ),
   );
   return async function check(url, signal) {
@@ -97,6 +97,7 @@ function createRetailerPolicy(fetchFile, config = {}) {
           return body;
         })
         .catch((error) => {
+          if (error.code === "UNSAFE_URL") throw error;
           const status = error.remoteStatus;
           if ([404, 410].includes(status)) return "";
           entry.until = Date.now() + 30000;

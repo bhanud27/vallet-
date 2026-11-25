@@ -10,7 +10,7 @@ import {
 import { Image } from "expo-image";
 import type { CreationMedia, ProductDraft } from "../../lib/creationDraft";
 import { formatProductPrice } from "../../lib/productPrice";
-import { detectProductUrl } from "../../lib/validation";
+import { canonicalPollProductUrl } from "../../lib/validation";
 import { SocialIcon } from "../SocialIcon";
 import { Button, PriceTag } from "../kit";
 import { GlossyReflection } from "../ThemeSurface";
@@ -36,11 +36,13 @@ export function ProductPreviewCard({
 }) {
   const { colors, type, glossy, creation: tokens } = useTheme();
   const [badImage, setBadImage] = useState("");
-  const url = detectProductUrl(product.url);
+  const url = canonicalPollProductUrl(product.canonicalUrl || product.url);
   const domain = url ? domainFor(url) : undefined;
   const photo = mediaFor(product, media).find((m) => m.kind === "image");
   const hasVideo = mediaFor(product, media).some((m) => m.kind === "video");
-  const showImage = photo && badImage !== photo.id;
+  const imageUri = photo?.file.uri ?? product.importedImageUrl;
+  const imageKey = photo?.id ?? imageUri;
+  const showImage = imageUri && badImage !== imageKey;
   const currency = product.fields.currency || null;
   const price = Number(product.fields.price.replace(/,/g, ""));
   const original = Number(product.originalPrice?.replace(/,/g, ""));
@@ -69,16 +71,16 @@ export function ProductPreviewCard({
       >
         {showImage ? (
           <Image
-            source={{ uri: photo.file.uri }}
+            source={{ uri: imageUri }}
             style={StyleSheet.absoluteFill}
             contentFit="contain"
             cachePolicy="memory-disk"
-            recyclingKey={photo.id}
+            recyclingKey={imageKey}
             accessible
             accessibilityLabel={
               product.name ? "Photo of " + product.name : "Product photo"
             }
-            onError={() => setBadImage(photo.id)}
+            onError={() => setBadImage(imageKey ?? "")}
           />
         ) : onPhoto ? (
           <Button label="Add photo" variant="quiet" onPress={onPhoto} />

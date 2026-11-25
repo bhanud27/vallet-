@@ -327,7 +327,11 @@ test("authorized provider can supply metadata after a retailer denies direct req
       {
         name: "test-licensed-api",
         supports: () => true,
-        extract: async ({ url }: any) => ({ url, html: productDoc(900) }),
+        extract: async ({ url }: any) => ({
+          url,
+          html: productDoc(900),
+          offerObservedAt: new Date().toISOString(),
+        }),
       },
     ],
   });
@@ -444,7 +448,7 @@ test("rich preview shares metadata with enrichment and validates only a suitable
         extract: async ({ url }: { url: string }) => {
           providerCalls++;
           await providerReady;
-          return { url, html: productDoc(1199) };
+          return { url, html: productDoc(1199), offerObservedAt: new Date().toISOString() };
         },
       },
     ],
@@ -625,7 +629,7 @@ test("SerpApi requires an exact retailer offer and an approved image host", asyn
   );
   assert.equal(p.name, "Exact shirt");
   assert.equal(p.image, exact.thumbnail);
-  assert.equal(p.offers.price, 499);
+  assert.equal(p.offers, undefined);
   assert.equal(
     exactOffer({ product_result: { pricing: [exact] } }, target).image,
     undefined,
@@ -638,7 +642,7 @@ test("SerpApi requires an exact retailer offer and an approved image host", asyn
     },
     async (endpoint: string, options: RequestInit) => {
       assert.equal(new URL(endpoint).origin, "https://serpapi.com");
-      assert.equal(new URL(endpoint).searchParams.get("q"), target);
+      assert.equal(new URL(endpoint).searchParams.get("q"), "ajio 123_blue site:www.ajio.com");
       assert.equal(options.redirect, "error");
       return new Response(
         JSON.stringify({ product_result: { pricing: [exact] } }),

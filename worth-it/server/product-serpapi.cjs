@@ -1,9 +1,7 @@
 const {
   sameProductUrl,
-  retailerProductKey,
-  productUrlKey,
+  retailerProductIdentity,
 } = require("./product-identity.cjs");
-const { amount } = require("./product-model.cjs");
 const { Buffer } = require("node:buffer");
 
 function approvedImage(value, hosts) {
@@ -22,11 +20,23 @@ function approvedImage(value, hosts) {
 }
 
 function exactOffer(data, requested, imageHosts = []) {
+  if (!retailerProductIdentity(requested)) return null;
   const product = data?.product_result;
-  if (!Array.isArray(product?.pricing)) return null;
-  for (const offer of product.pricing) {
+  const organic = Array.isArray(data?.organic_results) ? data.organic_results : [];
+  const offers = Array.isArray(product?.pricing) ? product.pricing : [];
+  const candidates = [
+    ...offers.map((offer) => ({
+      link: offer?.link,
+      title: offer?.title || product.title,
+      thumbnail: offer?.thumbnail,
+    })),
+    ...organic,
+  ];
+  let title;
+  const images = new Set();
+  for (const candidate of candidates) {
     try {
-      const merchant = new URL(offer.link);
+      const merchant = new URL(candidate.link);
       if (
         merchant.protocol !== "https:" ||
         merchant.username ||
@@ -35,50 +45,30 @@ function exactOffer(data, requested, imageHosts = []) {
         !sameProductUrl(requested, merchant.href)
       )
         continue;
-      const title = [offer.title, product.title].find(
-        (value) => typeof value === "string" && value.trim(),
-      );
-      const image = approvedImage(offer.thumbnail, imageHosts);
-      if (!title && !image) continue;
-      const price = amount(offer.extracted_price);
-      const currency = /^[A-Z]{3}$/.test(offer.currency ?? "")
-        ? offer.currency
-        : typeof offer.price === "string" && /^\s*(?:₹|INR\b)/.test(offer.price)
-          ? "INR"
-          : undefined;
-      const original = amount(offer.extracted_original_price);
-      return {
-        "@context": "https://schema.org",
-        "@type": "Product",
-        url: requested,
-        name: title?.trim().slice(0, 80),
-        image,
-        ...(price && currency
-          ? {
-              offers: {
-                "@type": "Offer",
-                price,
-                priceCurrency: currency,
-                url: merchant.href,
-                ...(original > price
-                  ? {
-                      priceSpecification: {
-                        "@type": "UnitPriceSpecification",
-                        priceType: "https://schema.org/StrikethroughPrice",
-                        price: original,
-                        priceCurrency: currency,
-                      },
-                    }
-                  : {}),
-              },
-            }
-          : {}),
-      };
+      if (!title && typeof candidate.title === "string")
+        title = candidate.title.trim().slice(0, 80);
+      const image = approvedImage(candidate.thumbnail, imageHosts);
+      if (image) images.add(image);
     } catch {
       // A malformed or mismatched merchant URL cannot verify the offer.
     }
   }
-  return null;
+  if (!title && !images.size) return null;
+  // Google search has no merchant offer observation time, even on a fresh search.
+  return {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    url: requested,
+    name: title || undefined,
+    image: images.size === 1 ? images.values().next().value : images.size ? [...images] : undefined,
+  };
+}
+
+function searchMarket({ retailer, locale, url }, defaultMarket) {
+  if (retailer === "zara") return locale.split("/")[0].toLowerCase();
+  if (retailer === "hm") return /[_-]([a-z]{2})$/i.exec(locale)?.[1]?.toLowerCase() || defaultMarket;
+  if (retailer === "amazon") return url.hostname.endsWith(".in") ? "in" : "us";
+  return defaultMarket;
 }
 
 function configuredSerpApi(env = process.env, request = fetch) {
@@ -100,18 +90,24 @@ function configuredSerpApi(env = process.env, request = fetch) {
         !requested.username &&
         !requested.password &&
         !requested.port &&
-        retailerProductKey(url) !== null &&
+        retailerProductIdentity(url) !== null &&
         ![...requested.searchParams.keys()].some((key) =>
           /token|password|auth|session|signature|credential|email/i.test(key),
         )
       );
     },
     async extract({ url, signal }) {
+      const identity = retailerProductIdentity(url);
+      if (!identity) return null;
+      const { retailer, id, locale, url: page } = identity;
+      const variant = retailer === "zara" && page.searchParams.get("v1");
+      const terms = [retailer, id, `site:${page.hostname}${locale ? "/" + locale + "/" : ""}`];
+      if (/^\d+$/.test(variant)) terms.push(variant);
       const endpoint = new URL("https://serpapi.com/search.json");
       endpoint.search = new URLSearchParams({
         engine: "google",
-        q: productUrlKey(url),
-        gl: env.PRODUCT_SERPAPI_COUNTRY || "in",
+        q: terms.join(" "),
+        gl: searchMarket(identity, env.PRODUCT_SERPAPI_COUNTRY || "in"),
         hl: "en",
         api_key: env.SERPAPI_API_KEY,
       });

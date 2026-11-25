@@ -24,7 +24,7 @@ const {
 const { Buffer } = require("node:buffer");
 const { createHash } = require("node:crypto");
 const { lookup } = require("node:dns").promises;
-const { createServer } = require("node:http");
+const { createServer, request: httpRequest } = require("node:http");
 const { request, Agent } = require("node:https");
 const publicAgent = new Agent({
   keepAlive: true,
@@ -32,7 +32,10 @@ const publicAgent = new Agent({
   maxFreeSockets: 2,
   timeout: 9000,
 });
-const { BlockList } = require("node:net");
+const { BlockList, isIP } = require("node:net");
+const metadataScript = require("../shared/product-metadata.cjs");
+// Compile the bundled code once. Page content is passed in as data.
+const productMetadata = new Function(`return (${metadataScript})`)();
 const {
   createBrotliDecompress,
   createGunzip,
@@ -40,6 +43,20 @@ const {
 } = require("node:zlib");
 
 const endpoint = "/api/product-preview";
+const importCodes = require("../shared/product-import-codes.json");
+
+function endpointFailureCode(error) {
+  if (Object.hasOwn(importCodes, error.code)) return error.code;
+  const code = failureCode(error);
+  if (Object.hasOwn(importCodes, code)) return code;
+  if (code === "EXTRACTION_TIMEOUT") return "FETCH_TIMEOUT";
+  if (["NETWORK_UNAVAILABLE", "POLICY_UNAVAILABLE", "CONNECTION_RESET"].includes(code))
+    return "NETWORK_ERROR";
+  if (code === "UNSUPPORTED_URL") return "NOT_HTML";
+  if (code === "METADATA_NOT_FOUND") return "PARTIAL_EXTRACTION";
+  if (error.remoteStatus === 429) return "ACCESS_RESTRICTED";
+  return "UNKNOWN";
+}
 const maxPage = 5 * 1024 * 1024;
 const maxImage = 8 * 1024 * 1024;
 const maxGalleryImages = 24;
@@ -69,11 +86,47 @@ for (const [address, prefix] of [
 ])
   blocked.addSubnet(address, prefix);
 
+const globalV6 = new BlockList();
+globalV6.addSubnet("2000::", 3, "ipv6");
+for (const [address, prefix] of [["2001::", 23], ["2001:db8::", 32], ["2002::", 16], ["3fff::", 20]])
+  blocked.addSubnet(address, prefix, "ipv6");
+
+function isPublicAddress(address) {
+  const family = isIP(address);
+  if (family === 4) return !blocked.check(address, "ipv4");
+  return family === 6 && globalV6.check(address, "ipv6") && !blocked.check(address, "ipv6");
+}
+
 class PreviewError extends Error {
-  constructor(message, status = 422) {
+  constructor(message, status = 422, code) {
     super(message);
     this.status = status;
+    this.code = code;
   }
+}
+
+function genericPublicUrl(input, base) {
+  const invalid = () => new PreviewError("Enter a valid HTTP or HTTPS product link.", 400, "INVALID_URL");
+  if (typeof input !== "string" || input.length > 4096 || (!base && !/^https?:\/\//i.test(input)))
+    throw invalid();
+  let url;
+  try { url = new URL(input, base); } catch { throw invalid(); }
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password) throw invalid();
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (url.port || (isIP(host) ? !isPublicAddress(host) :
+    !host.includes(".") || /\.(local|internal|localhost|home|lan|onion|test|invalid)$/i.test(host)))
+    throw new PreviewError("Use a public website address.", 422, "UNSAFE_URL");
+  url.hash = "";
+  return url;
+}
+
+function canonicalProductUrl(url) {
+  const canonical = new URL(url);
+  canonical.hash = "";
+  for (const key of [...canonical.searchParams.keys()])
+    if (/^(?:utm_.*|fbclid|gclid|dclid|msclkid|igshid|twclid|ttclid|mc_cid|mc_eid|_ga)$/i.test(key))
+      canonical.searchParams.delete(key);
+  return canonical.href;
 }
 
 function publicUrl(input, base) {
@@ -92,7 +145,7 @@ function publicUrl(input, base) {
     url.port ||
     !url.hostname.includes(".") ||
     /^[\d.]+$/.test(url.hostname) ||
-    /\.(local|internal|localhost|home|lan)\.?$/i.test(url.hostname)
+    /\.(local|internal|localhost|home|lan|onion|test|invalid)\.?$/i.test(url.hostname)
   ) {
     throw new PreviewError("Use a public HTTPS product link.", 400);
   }
@@ -112,26 +165,33 @@ function withAbort(promise, signal) {
 }
 
 async function requestPublic(url, signal, accept, options = {}) {
-  const addresses = await withAbort(
-    (options.resolve || lookup)(url.hostname, { family: 4, all: true }),
-    signal,
-  );
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const literalFamily = isIP(host);
+  const addresses = literalFamily
+    ? [{ address: host, family: literalFamily }]
+    : await withAbort((options.resolve || lookup)(host, {
+        ...(options.generic ? {} : { family: 4 }), all: true,
+      }), signal);
   if (
     !addresses.length ||
-    addresses.some(({ address }) => blocked.check(address))
+    addresses.some(({ address }) => !isPublicAddress(address))
   ) {
+    if (options.generic)
+      throw new PreviewError("Use a public website address.", 422, "UNSAFE_URL");
     throw new PreviewError("Use a public HTTPS product link.", 400);
   }
   // Keep the retailer hostname for TLS but use only the address that was just checked.
-  const { address } = addresses[0];
+  const { address } = addresses.find(({ address }) => isIP(address) === 4) || addresses[0];
+  const family = isIP(address);
+  const tls = url.protocol === "https:";
   return new Promise((resolve, reject) => {
-    const outgoing = (options.transport || request)(
+    const outgoing = (options.transport || (tls ? request : httpRequest))(
       url,
       {
-        agent: options.transport ? false : publicAgent,
-        family: 4,
+        agent: options.transport || options.generic || !tls ? false : publicAgent,
+        family,
         autoSelectFamily: false,
-        lookup: (_hostname, _options, callback) => callback(null, address, 4),
+        lookup: (_hostname, _options, callback) => callback(null, address, family),
         signal,
         headers: {
           accept,
@@ -159,10 +219,11 @@ async function readLimited(stream, limit) {
 }
 
 async function fetchPublic(input, signal, includePage, options = {}) {
-  signal = AbortSignal.any([signal, AbortSignal.timeout(9000)]);
-  let url = publicUrl(retailerPageUrl(publicUrl(input).href));
+  signal = AbortSignal.any([signal, AbortSignal.timeout(options.generic ? 8000 : 9000)]);
+  const validate = options.generic ? genericPublicUrl : publicUrl;
+  let url = options.generic ? validate(input) : publicUrl(retailerPageUrl(publicUrl(input).href));
   const initial = url.href;
-  for (let redirects = 0; redirects <= 4; redirects++) {
+  for (let redirects = 0; redirects <= (options.generic ? 5 : 4); redirects++) {
     let res;
     try {
       if (!options.text && options.beforeRequest)
@@ -184,11 +245,16 @@ async function fetchPublic(input, signal, includePage, options = {}) {
     }
     if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
       res.destroy();
-      const target = publicUrl(
-        retailerPageUrl(publicUrl(res.headers.location, url).href),
-      );
+      let target;
+      try {
+        target = validate(res.headers.location, url);
+        if (!options.generic) target = publicUrl(retailerPageUrl(target.href));
+      } catch (error) {
+        error.remoteStatus = res.statusCode;
+        throw error;
+      }
       if (
-        (includePage && !permittedPageRedirect(initial, target.href)) ||
+        (!options.generic && includePage && !permittedPageRedirect(initial, target.href)) ||
         (options.text && target.origin !== new URL(initial).origin)
       )
         throw new PreviewError(
@@ -218,7 +284,9 @@ async function fetchPublic(input, signal, includePage, options = {}) {
       res.statusCode !== 200 ||
       (options.text
         ? !isText
-        : !isPage && !imageTypes.has(type) && !genericImage)
+        : options.generic && includePage
+          ? !isPage
+          : !isPage && !imageTypes.has(type) && !genericImage)
     ) {
       res.destroy();
       const error = new PreviewError(
@@ -226,7 +294,8 @@ async function fetchPublic(input, signal, includePage, options = {}) {
           ? "This store requires opening its product page in a browser. Use the full website product link or add photos manually."
           : "The store did not provide a preview for this link.",
       );
-      if (res.statusCode === 200) error.code = "UNSUPPORTED_URL";
+      if (res.statusCode === 200) error.code = options.generic ? "NOT_HTML" : "UNSUPPORTED_URL";
+      if (options.generic && res.statusCode === 429) error.code = "ACCESS_RESTRICTED";
       error.stage = options.text ? "policy" : includePage ? "page" : "image";
       if (includePage && [401, 403].includes(res.statusCode))
         error.reason = "PAGE_HTTP_DENIED";
@@ -243,7 +312,7 @@ async function fetchPublic(input, signal, includePage, options = {}) {
     try {
       const body = await readLimited(
         decoded,
-        isText ? 512 * 1024 : isPage ? maxPage : maxImage,
+        isText ? 512 * 1024 : isPage ? options.generic ? 2 * 1024 * 1024 : maxPage : maxImage,
       );
       const actualType = isPage || isText ? type : detectImageMime(body);
       if (
@@ -256,6 +325,7 @@ async function fetchPublic(input, signal, includePage, options = {}) {
     } catch (error) {
       error.stage ??= options.text ? "policy" : includePage ? "page" : "image";
       error.productUrl = url.href;
+      if (options.generic) error.remoteStatus ??= res.statusCode;
       throw error;
     } finally {
       res.destroy();
@@ -752,7 +822,12 @@ async function usableImage(file) {
 }
 
 function createProductImporter(options = {}) {
-  const rawFetch = options.fetchFile || fetchPublic;
+  const rawFetch = options.fetchFile || ((input, signal, includePage, requestOptions) =>
+    fetchPublic(input, signal, includePage, {
+      ...requestOptions,
+      resolve: options.resolve,
+      transport: options.transport,
+    }));
   const fetchFile = async (...args) => {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -760,6 +835,7 @@ function createProductImporter(options = {}) {
       } catch (error) {
         if (
           attempt ||
+          args[3]?.text ||
           !(
             [429, 500, 502, 503, 504].includes(error.remoteStatus) ||
             ["ECONNRESET", "EAI_AGAIN", "ETIMEDOUT"].includes(error.code)
@@ -828,6 +904,35 @@ function createProductImporter(options = {}) {
   let cachedBytes = 0;
   const metadataCache = new Map(),
     metadataPending = new Map();
+  function setProviderPrice(intelligence, observed) {
+    const { product, extraction } = intelligence;
+    if (observed != null && product.price.current != null) {
+      product.price.observed_at = new Date(observed).toISOString();
+      for (const key of ["current", "original", "currency"]) {
+        const field = extraction.provenance["price." + key];
+        if (field.source) field.observed_at = product.price.observed_at;
+      }
+      return;
+    }
+    product.price = {
+      ...product.price,
+      current: null,
+      original: null,
+      currency: null,
+      discount_amount: null,
+      discount_percentage: null,
+      observed_at: null,
+      state: "missing",
+    };
+    product.offers = [];
+    product.variants = product.variants.map((variant) => ({
+      ...variant,
+      price: null,
+      currency: null,
+    }));
+    for (const key of ["price.current", "price.original", "price.currency", "offers"])
+      extraction.provenance[key] = { source: null, state: "missing", observed_at: null };
+  }
   async function readMetadata(input) {
     input = publicUrl(input).href;
     const signal = AbortSignal.timeout(
@@ -843,25 +948,34 @@ function createProductImporter(options = {}) {
     let result,
       preview,
       providerFailures,
+      offerObservedAt,
       restrictedProvider = false;
+    const requested = retailerPageUrl(input);
     try {
-      await policy(retailerPageUrl(input), signal);
+      await policy(requested, signal);
       result = await fetchFile(input, signal, true, { beforeRequest: policy });
-      if (result.url.href !== retailerPageUrl(input))
+      if (result.url.href !== requested)
         await policy(result.url.href, signal);
+      if (retailerProductKey(requested) && !sameProductUrl(requested, result.url.href))
+        throw Object.assign(
+          new PreviewError("This link did not return a product page matching this link. Use the full product link, or add details and photos manually."),
+          { code: "METADATA_NOT_FOUND", stage: "metadata" },
+        );
       if (!imageTypes.has(result.type))
         preview = await extractProduct(
           result.body.toString("utf8"),
           result.url,
         );
     } catch (error) {
-      const target =
-        error.productUrl || result?.url.href || retailerPageUrl(input);
+      const target = retailerProductKey(requested)
+        ? requested
+        : error.productUrl || result?.url.href || requested;
       const extra = await fallbacks({
         url: target,
         retailer: retailerPlatform(target),
         signal,
         restricted: true,
+        priceTTL,
       });
       providerFailures = extra.failures;
       if (extra.html) {
@@ -870,6 +984,7 @@ function createProductImporter(options = {}) {
           type: "text/html",
           body: Buffer.from(extra.html),
         };
+        offerObservedAt = extra.offerObservedAt;
         restrictedProvider = true;
       } else {
         error.stage ??= "page";
@@ -935,6 +1050,7 @@ function createProductImporter(options = {}) {
     );
     intelligence.source.resolved_url = result.url.href;
     if (restrictedProvider) {
+      setProviderPrice(intelligence, offerObservedAt);
       intelligence.extraction.fallback_failures = providerFailures;
       intelligence.extraction.provider = true;
       intelligence.extraction.method = "authorized_provider";
@@ -971,33 +1087,32 @@ function createProductImporter(options = {}) {
         signal,
         restricted: false,
         browser,
+        priceTTL,
       });
       intelligence.extraction.fallback_failures = extra.failures;
-      if (extra.html) {
-        const extraLegacy = await extractProduct(extra.html, result.url);
-        const additional = await extractIntelligence(
-          extra.html,
-          result.url.href,
-          extraLegacy,
-          publicUrl,
-        );
-        if (missingCover) {
-          const images = intelligence.product.images;
-          const alternates = additional.product.images.filter(
-            (candidate) =>
-              !images.some(
-                (image) =>
-                  imageIdentity(image.url) === imageIdentity(candidate.url),
-              ),
-          );
-          intelligence.product.images = [
-            ...alternates.map((image) => ({
-              ...image,
-              source: extra.method,
-            })),
-            ...images,
-          ].slice(0, maxGalleryImages);
+      let additional;
+      if (extra.html)
+        try {
+          const extraLegacy = await extractProduct(extra.html, result.url);
+          additional = await extractIntelligence(extra.html, url, extraLegacy, publicUrl);
+        } catch {
+          extra.failures.push({
+            code: extra.method === "authorized_provider" ? "PROVIDER_ERROR" : "BROWSER_UNAVAILABLE",
+          });
         }
+      if (additional) {
+        if (extra.method === "authorized_provider")
+          setProviderPrice(additional, extra.offerObservedAt);
+        const images = intelligence.product.images;
+        const seen = new Set(images.map((image) => image.url));
+        const alternates = additional.product.images
+          .filter((candidate) => !seen.has(candidate.url))
+          .map((image) => ({ ...image, source: extra.method }));
+        intelligence.product.images = (missingCover
+          ? [...alternates, ...images]
+          : [...images, ...alternates]
+        ).slice(0, maxGalleryImages);
+        intelligence.product.image_count = intelligence.product.images.length;
         // Keep directly retrieved fields when supplementary metadata is available.
         for (const [key, value] of Object.entries(additional.product)) {
           if (
@@ -1009,23 +1124,16 @@ function createProductImporter(options = {}) {
         }
         const price = intelligence.product.price;
         const supplementaryPrice = additional.product.price;
-        const priceKeys = ["current", "original", "currency"];
-        const compatiblePrice =
-          !price.currency ||
-          !supplementaryPrice.currency ||
-          price.currency === supplementaryPrice.currency;
         const enrichedPrice = new Set();
-        if (compatiblePrice)
-          for (const key of priceKeys)
-            if (
-              price[key] == null &&
-              supplementaryPrice[key] != null &&
-              (key !== "currency" ||
-                price.current === supplementaryPrice.current)
-            ) {
+        if (price.current == null && supplementaryPrice.current != null) {
+          for (const key of ["current", "original", "currency"])
+            if (price[key] == null && supplementaryPrice[key] != null) {
               price[key] = supplementaryPrice[key];
               enrichedPrice.add("price." + key);
             }
+          price.observed_at = supplementaryPrice.observed_at;
+          price.state = supplementaryPrice.state;
+        }
         if (
           price.current != null &&
           price.original != null &&
@@ -1065,7 +1173,8 @@ function createProductImporter(options = {}) {
       category: model.category || "",
       images: model.images.map((i) => i.url),
     };
-    if (!preview.images.length && !preview.name)
+    if (!preview.images.length && !preview.name && preview.price == null &&
+      !preview.description && !preview.brand && !preview.category)
       throw Object.assign(
         new PreviewError(
           "No product information was accessible for this link. Add details and photos manually.",
@@ -1096,7 +1205,10 @@ function createProductImporter(options = {}) {
           metadataCache.delete(metadataCache.keys().next().value);
         metadataCache.set(key, {
           value: structuredClone(value),
-          until: Date.now() + priceTTL,
+          until: Math.min(
+            Date.now(),
+            Date.parse(value.intelligence?.product.price.observed_at) || Infinity,
+          ) + priceTTL,
         });
       }
       return structuredClone(value);
@@ -1104,15 +1216,15 @@ function createProductImporter(options = {}) {
       if (metadataPending.get(key) === task) metadataPending.delete(key);
     }
   }
-  async function loadProduct(input, detailsOnly, mode) {
+  async function loadProduct(input, detailsOnly, mode, failedImages) {
     const metadata = await cachedMetadata(input, () => readMetadata(input));
     if (metadata.ready) return metadata.ready;
     const direct = mode === "rich";
     const coverOnly = direct || mode === "enriched-preview";
     const initial = cache.get(input + "#rich")?.value;
-    const missingCover = !!initial && !initial.images.length;
+    const missingCover = !!failedImages || (!!initial && !initial.images.length);
     const enrich = () =>
-      cachedMetadata(input + "#enriched", () =>
+      cachedMetadata(input + (missingCover ? "#cover-recovery" : "#enriched"), () =>
         finishMetadata(metadata, false, missingCover),
       );
     const { preview, intelligence } = direct
@@ -1139,11 +1251,14 @@ function createProductImporter(options = {}) {
     );
     // Known thumbnail transforms under the minimum decoded image width cannot
     // supply the cover. Keep source ordering for all other candidates.
+    const unchecked = model.images.filter((image) => {
+      const failed = failedImages?.get(image.url);
+      if (failed) Object.assign(image, failed, { is_primary: false });
+      return !failed;
+    });
     const candidates = coverOnly
-      ? model.images
-          .filter((image) => imageResolution(image.url) >= 150)
-          .slice(0, 8)
-      : model.images;
+      ? unchecked.filter((image) => imageResolution(image.url) >= 150).slice(0, 8)
+      : unchecked;
     const checkImageCopy = (url) => {
       if (copyRestricted && !copyHosts.includes(new URL(url).hostname))
         throw Object.assign(
@@ -1168,7 +1283,10 @@ function createProductImporter(options = {}) {
       const fetched = await Promise.allSettled(
         candidates.slice(start, start + batch).map(async ({ url }) => {
           checkImageCopy(url);
-          const file = await fetchFile(url, signal, false, {
+          const imageSignal = coverOnly
+            ? AbortSignal.any([signal, AbortSignal.timeout(2500)])
+            : signal;
+          const file = await fetchFile(url, imageSignal, false, {
             beforeRequest: async (target, requestSignal) => {
               checkImageCopy(target);
               await policy(target, requestSignal);
@@ -1236,6 +1354,16 @@ function createProductImporter(options = {}) {
         break;
       }
     }
+    if (
+      mode === "enriched-preview" &&
+      !available.length &&
+      !missingCover &&
+      !intelligence.extraction.fallback_failures &&
+      !signal.aborted
+    )
+      return loadProduct(input, detailsOnly, mode, new Map(
+        model.images.map((image) => [image.url, image]),
+      ));
     const { images: _remoteImages, ...details } = preview;
     return {
       ...details,
@@ -1277,6 +1405,7 @@ function createProductImporter(options = {}) {
     if (refresh && !pending.has(key)) {
       metadataCache.delete(pageKey);
       metadataCache.delete(pageKey + "#enriched");
+      metadataCache.delete(pageKey + "#cover-recovery");
       for (const oldKey of [
         pageKey,
         pageKey + "#metadata",
@@ -1319,7 +1448,8 @@ function createProductImporter(options = {}) {
     try {
       const value = await task;
       const priceUntil =
-        (Date.parse(value.extraction?.extracted_at) || Date.now()) + priceTTL;
+        (Date.parse(value.product?.price.observed_at) ||
+          Date.parse(value.extraction?.extracted_at) || Date.now()) + priceTTL;
       if (value.extraction)
         value.extraction.price_expires_at =
           value.price == null && value.originalPrice == null
@@ -1510,6 +1640,97 @@ function createProductImporter(options = {}) {
 }
 const importProduct = createProductImporter();
 
+async function extractGenericProduct(html, url) {
+  const { parse } = await import("parse5");
+  const nodes = [{ node: parse(html), visible: false }];
+  const tags = Object.create(null), micro = Object.create(null), json = [];
+  let title = "", visibleLength = 0, appRoot = false;
+  for (let index = 0; index < nodes.length && index < 60000; index++) {
+    const { node, visible } = nodes[index];
+    const attrs = Object.fromEntries((node.attrs || []).map(({ name, value }) => [name, value]));
+    const text = textContent(node);
+    const tag = node.tagName;
+    if (visible && node.nodeName === "#text") visibleLength += node.value.trim().length;
+    if (tag === "title") title = text;
+    if (/^(?:root|app|app-root|__next|__nuxt|__NEXT_DATA__)$/i.test(attrs.id || "")) appRoot = true;
+    if (tag === "meta") {
+      const property = (attrs.property || attrs.name || "").toLowerCase();
+      if (property && attrs.content) tags[property] ??= attrs.content;
+    }
+    if (attrs.itemprop) {
+      for (const key of attrs.itemprop.split(/\s+/)) {
+        const value = attrs.content || attrs.href || attrs.src || attrs.value || text.trim();
+        if (value) micro[key] ??= key === "image" ? { url: value, width: attrs.width, height: attrs.height } : value;
+      }
+    }
+    if (tag === "script" && json.length < 40 && (attrs.id === "__NEXT_DATA__" || /^application\/(?:ld\+)?json$/i.test(attrs.type || "")))
+      json.push({ text, schema: attrs.type === "application/ld+json" });
+    const show = (visible || tag === "body") && !["script", "style", "template", "noscript"].includes(tag);
+    for (const child of node.childNodes || []) if (nodes.length < 60000) nodes.push({ node: child, visible: show });
+  }
+  return productMetadata({ json, micro, tags, title, url, jsShell: appRoot && visibleLength < 40 });
+}
+
+function createGenericProductImporter({ resolve, transport, timeout = 8000, policyTimeout, cacheTtl = 24 * 60 * 60 * 1000 } = {}) {
+  const cache = new Map();
+  const fetchFile = (input, signal, includePage, options) =>
+    fetchPublic(input, signal, includePage, { ...options, generic: true, resolve, transport });
+  const policy = createRetailerPolicy(fetchFile, { timeout: policyTimeout });
+  return async (input, refresh, caller = new AbortController().signal) => {
+    const original = genericPublicUrl(input).href;
+    const key = canonicalProductUrl(original);
+    const cached = cache.get(key);
+    if (!refresh && cached?.until > Date.now()) return cached.value;
+    if (refresh || cached) cache.delete(key);
+    const signal = AbortSignal.any([caller, AbortSignal.timeout(timeout)]);
+    const result = await fetchFile(original, signal, true, { beforeRequest: policy });
+    const productUrl = canonicalProductUrl(result.url.href);
+    const { title, jsRequired, ...metadata } = await withAbort(extractGenericProduct(result.body.toString("utf8"), result.url.href), signal);
+    if (/^(?:access denied|request blocked|just a moment|security challenge|verify (?:that )?you are human)[.\s!]*$/i.test(title || "")) {
+      const error = new PreviewError("This page requires opening in a browser.", 422, "ACCESS_RESTRICTED");
+      error.remoteStatus = 200;
+      throw error;
+    }
+    const complete = !!(title && (metadata.price || metadata.imageUrl));
+    let imageUrl;
+    try { if (metadata.imageUrl) imageUrl = genericPublicUrl(metadata.imageUrl).href; } catch { /* The candidate is unusable. */ }
+    const value = {
+      ...metadata,
+      imageUrl,
+      name: title || "",
+      productUrl,
+      platform: result.url.hostname,
+      images: [],
+      code: jsRequired ? "JS_RENDER_REQUIRED" : title && (metadata.price || imageUrl) ? null : "PARTIAL_EXTRACTION",
+      remote_status: 200,
+    };
+    if (complete && !value.code) {
+      const entry = { value, until: Date.now() + cacheTtl };
+      for (const alias of new Set([key, productUrl])) {
+        if (cache.size >= 256) cache.delete(cache.keys().next().value);
+        cache.set(alias, entry);
+      }
+    }
+    return value;
+  };
+}
+
+const importGenericProduct = createGenericProductImporter();
+
+function createPreviewImporter(richImporter = importProduct, genericImporter = importGenericProduct) {
+  return (input, refresh, signal, payload = {}) => {
+    const url = genericPublicUrl(input);
+    if (url.protocol === "http:") return genericImporter(input, refresh, signal);
+    const detailsOnly = payload.detailsOnly === true;
+    const mode = payload.mode === "rich" || payload.mode === "enriched-preview"
+      ? payload.mode
+      : detailsOnly ? undefined : "enriched-preview";
+    return withAbort(richImporter(url.href, refresh, detailsOnly && !mode, mode), signal);
+  };
+}
+
+const importPreview = createPreviewImporter();
+
 const recent = new Map();
 let inFlight = 0;
 
@@ -1532,10 +1753,16 @@ function respond(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function productImportMiddleware(req, res, next) {
-  if (req.url?.split("?")[0] !== endpoint) return next();
+function productImportMiddleware(req, res, next, importer = importPreview) {
+  const path = req.url?.split("?")[0];
+  if (path === "/api/health")
+    return req.method === "GET"
+      ? respond(res, 200, { status: "ok" })
+      : respond(res, 405, { code: "UNKNOWN", error: "Use GET for health checks." });
+  if (path !== endpoint) return next();
   if (!allowedRequest(req))
     return respond(res, 403, {
+      code: "ACCESS_RESTRICTED",
       error: "This preview server does not accept requests from this site.",
     });
   if (req.headers.origin) {
@@ -1550,9 +1777,9 @@ function productImportMiddleware(req, res, next) {
     return res.end();
   }
   if (req.method !== "POST")
-    return respond(res, 405, { error: "Use POST to import product links." });
+    return respond(res, 405, { code: "UNKNOWN", error: "Use POST to import product links." });
   if (String(req.headers["content-type"]).split(";")[0] !== "application/json")
-    return respond(res, 415, { error: "Expected a JSON product link." });
+    return respond(res, 415, { code: "INVALID_URL", error: "Expected a JSON product link." });
 
   const now = Date.now();
   for (const [address, window] of recent)
@@ -1564,6 +1791,7 @@ function productImportMiddleware(req, res, next) {
     process.env.PRODUCT_IMPORT_REQUIRE_AUTH === "true";
   if (inFlight >= 4 || window.count >= (authenticatedHost ? 120 : 12))
     return respond(res, 429, {
+      code: "UNKNOWN",
       error: "Too many previews. Try again in a moment.",
     });
   recent.set(address, { ...window, count: window.count + 1 });
@@ -1595,23 +1823,10 @@ function productImportMiddleware(req, res, next) {
       } catch {
         throw new PreviewError("Enter a valid HTTPS product link.", 400);
       }
-      const mode = ["rich", "enriched-preview"].includes(payload?.mode)
-        ? payload.mode
-        : undefined;
-      respond(
-        res,
-        200,
-        await withAbort(
-          importProduct(
-            payload?.url,
-            payload?.refresh === true,
-            payload?.detailsOnly === true && !mode,
-            mode,
-          ),
-          caller.signal,
-        ),
-      );
+      const preview = await importer(payload?.url, payload?.refresh === true, caller.signal, payload);
+      respond(res, preview.code && preview.code !== "STALE_CACHE" ? 422 : 200, preview);
     } catch (error) {
+      const code = endpointFailureCode(error);
       const message =
         error instanceof PreviewError || error?.code === "RETAILER_POLICY"
           ? error.message
@@ -1628,12 +1843,12 @@ function productImportMiddleware(req, res, next) {
             error: [401, 503].includes(error.status) ? error.message : message,
             schema_version: 2,
             status:
-              failureCode(error) === "ACCESS_RESTRICTED"
+              code === "ACCESS_RESTRICTED"
                 ? "restricted"
-                : failureCode(error) === "UNSUPPORTED_URL"
+                : code === "NOT_HTML"
                   ? "unsupported"
                   : "failed",
-            code: failureCode(error),
+            code,
             stage:
               error.stage ?? (error.status === 400 ? "validation" : undefined),
             reason: error.reason,
@@ -1653,7 +1868,13 @@ module.exports = {
   extractProduct,
   importProduct,
   fetchPublic,
+  createGenericProductImporter,
+  extractGenericProduct,
+  genericPublicUrl,
+  canonicalProductUrl,
+  isPublicAddress,
   createProductImporter,
+  createPreviewImporter,
   publicUrl,
   usableImage,
   PreviewError,
@@ -1663,7 +1884,7 @@ if (require.main === module) {
   const port = Number(process.env.PORT || 8787);
   const server = createServer({ requestTimeout: 30_000 }, (req, res) =>
     productImportMiddleware(req, res, () =>
-      respond(res, 404, { error: "Not found." }),
+      respond(res, 404, { code: "UNKNOWN", error: "Not found." }),
     ),
   );
   server.listen(port, "0.0.0.0", () =>

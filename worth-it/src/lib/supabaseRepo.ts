@@ -29,7 +29,7 @@ import {
 } from "./types";
 import {
   normaliseUpdate,
-  parseProductUrl,
+  canonicalPollProductUrl,
   validatePoll,
   validateUpdate,
   validateVote,
@@ -348,7 +348,7 @@ export function createSupabaseRepo({
             {
               ...input,
               productUrl: input.productUrl
-                ? parseProductUrl(input.productUrl)!
+                ? canonicalPollProductUrl(input.productUrl)!
                 : undefined,
             },
             session.userId,

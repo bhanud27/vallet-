@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { randomUUID } from "expo-crypto";
 import {
   productShareInbox,
-  sharedProductUrl as readSharedProductUrl,
+  readSharedProduct,
 } from "../lib/incomingProductShare";
 import { pollDraftStore } from "../lib/pollDraft";
 import type { PollDraft } from "../lib/draftStore";
@@ -30,7 +30,7 @@ import type {
   CreationMedia,
   ProductDraft,
 } from "../lib/creationDraft";
-import { parsePrice, detectProductUrl, validatePoll } from "../lib/validation";
+import { canonicalPollProductUrl, parsePrice, detectProductImportUrl, validatePoll } from "../lib/validation";
 import { MAX_POLL_MEDIA, type NewPollInput } from "../lib/types";
 import { supabase } from "../lib/supabase";
 import { optionalRpc } from "../lib/backendRpc";
@@ -143,7 +143,7 @@ function restore(d: PollDraft, entry: Entry): CreationDraft {
       currency: d.productFields?.currency ?? (d.price ? "INR" : ""),
     },
     mediaIds: d.media.map((m) => m.id),
-    resolvedUrl: detectProductUrl(d.storeLink) ?? undefined,
+    resolvedUrl: detectProductImportUrl(d.storeLink) ?? undefined,
   };
   current.questions = { [current.subtype]: d.question };
   return current;
@@ -172,9 +172,11 @@ function useKeyboardOpen() {
 function Workspace({
   entry,
   sharedProductUrl,
+  sharedProductTitle,
 }: {
   entry: Entry;
   sharedProductUrl: string | null;
+  sharedProductTitle?: string;
 }) {
   const { session } = useApp();
   const { colors, type, glossy, creation: tokens } = useTheme();
@@ -291,7 +293,7 @@ function Workspace({
             "Some draft photos are missing. You can add them again.",
           );
       } else if (!shared && typeof params.productUrl === "string") {
-        const url = detectProductUrl(params.productUrl);
+        const url = detectProductImportUrl(params.productUrl);
         if (url) {
           setWorkspace(({ state, media }) => ({
             state: {
@@ -333,10 +335,12 @@ function Workspace({
     !published
   ) {
     setAppliedShare(sharedProductUrl);
-    if (detectProductUrl(state.products[0].url) !== sharedProductUrl) {
+    if (detectProductImportUrl(state.products[0].url) !== sharedProductUrl) {
       // Reset the share slot before its editor can fetch the previous product.
       const next = initial(entry);
       next.products[0].url = sharedProductUrl;
+      next.products[0].name = sharedProductTitle || "";
+      next.products[0].titleHint = sharedProductTitle;
       setWorkspace({ state: next, media: [] });
       setRequestId(randomUUID());
       setLegacy({ useCase: "", priority: "", budget: "" });
@@ -453,8 +457,9 @@ function Workspace({
     try {
       const products = comparing ? state.products : [first];
       const attachments: CreationMedia[] = [];
+      let photoSlots = MAX_POLL_MEDIA - media.length;
       const setup = products.map((product, index) => {
-        const url = detectProductUrl(product.url);
+        const url = canonicalPollProductUrl(product.canonicalUrl || product.url);
         const ids = posting
           ? [...product.mediaIds, ...(state.postMediaIds ?? [])]
           : product.mediaIds;
@@ -462,6 +467,15 @@ function Workspace({
           const item = media.find((file) => file.id === id);
           return item ? [item] : [];
         });
+        if (url && product.importedImageUrl && !files.some((file) => file.kind === "image") && photoSlots > 0) {
+          files.unshift({
+            id: product.id,
+            kind: "image",
+            file: { uri: product.importedImageUrl },
+            sourceUrl: url.startsWith("https://") ? url : undefined,
+          });
+          photoSlots--;
+        }
         if (product.url.trim() && !url)
           throw new Error("Enter a valid public product link.");
         if (!posting && !product.name.trim())
@@ -478,11 +492,14 @@ function Workspace({
           );
         const offset = attachments.length;
         attachments.push(...files);
+        const details = productDetails(product.fields);
+        if (product.importSource === "manual" && (!product.name.trim() || !details?.price))
+          throw new Error("Add a product title and a price greater than zero.");
         return {
           id: product.id,
           name: product.name.trim(),
           url: url ?? undefined,
-          details: productDetails(product.fields),
+          details,
           media: files.map((_, i) => offset + i),
         };
       });
@@ -502,6 +519,7 @@ function Workspace({
       const price = firstProduct.details?.price ?? 0;
       input = {
         contentKind: posting ? "post" : "poll",
+        importSource: first.importSource,
         requestId,
         itemName:
           firstProduct.name || question.trim().slice(0, 80) || "Fashion post",
@@ -942,18 +960,20 @@ function Workspace({
 
 export function ContentComposer({ kind = "create" }: { kind?: Entry }) {
   const { session } = useApp();
-  const { sharedProductUrl } = useLocalSearchParams<{
+  const { sharedProductUrl, sharedProductTitle } = useLocalSearchParams<{
     sharedProductUrl?: string;
+    sharedProductTitle?: string;
   }>();
   const url =
     kind === "create" && typeof sharedProductUrl === "string"
-      ? readSharedProductUrl([{ value: sharedProductUrl }])
+      ? readSharedProduct([{ value: sharedProductUrl }])?.url ?? null
       : null;
   return (
     <Workspace
       key={kind + session.userId + (url ? ":shared" : "")}
       entry={kind}
       sharedProductUrl={url}
+      sharedProductTitle={typeof sharedProductTitle === "string" ? sharedProductTitle.trim().slice(0, 80) : undefined}
     />
   );
 }

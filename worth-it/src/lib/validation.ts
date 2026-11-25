@@ -39,6 +39,14 @@ export function isHttpUrl(value: string): boolean {
 }
 
 export function parseProductUrl(value: string): string | null {
+  return productUrl(value, false);
+}
+
+export function canonicalPollProductUrl(value: string): string | null {
+  return productUrl(value, false, true);
+}
+
+function productUrl(value: string, original: boolean, allowHttp = original): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > LIMITS.productUrl) return null;
   try {
@@ -46,7 +54,7 @@ export function parseProductUrl(value: string): string | null {
       trimmed.includes("://") ? trimmed : `https://${trimmed}`,
     );
     if (
-      url.protocol !== "https:" ||
+      (url.protocol !== "https:" && (!allowHttp || url.protocol !== "http:")) ||
       url.port ||
       url.username ||
       url.password ||
@@ -56,14 +64,25 @@ export function parseProductUrl(value: string): string | null {
     )
       return null;
     url.hash = "";
+    if (original) return url.href.length <= LIMITS.productUrl ? url.href : null;
     for (const key of Array.from(url.searchParams.keys())) {
-      if (/^utm_/i.test(key) || /^(gclid|fbclid|msclkid)$/i.test(key))
+      if (/^(?:utm_.*|fbclid|gclid|dclid|msclkid|igshid|twclid|ttclid|mc_cid|mc_eid|_ga)$/i.test(key))
         url.searchParams.delete(key);
     }
     return url.href.length <= LIMITS.productUrl ? url.href : null;
   } catch {
     return null;
   }
+}
+
+export function detectProductImportUrl(value: string): string | null {
+  const text = value.trim();
+  if (!/\s/.test(text)) return productUrl(text, true);
+  for (const [, candidate] of text.matchAll(/(?:^|[\s<([{\u201c\u2018"'=])((?:https?:\/\/|www\.)[^\s<>"'\u201c\u201d]+)/gi)) {
+    const url = productUrl(candidate.replace(/[.,!?;:)\]}]+$/g, ""), true);
+    if (url) return url;
+  }
+  return null;
 }
 
 export function detectProductUrl(value: string): string | null {
@@ -79,7 +98,9 @@ export function detectProductUrl(value: string): string | null {
 }
 
 export function validatePollDetails(input: NewPollInput): void {
-  normalizeProductDetails(input.productDetails);
+  const details = normalizeProductDetails(input.productDetails);
+  if (input.importSource === "manual" && details?.price == null)
+    throw new AppError("invalid", "Enter a product price greater than zero.");
   const spec = normalizeCreationSpec(input.creationSpec);
   if (spec && (spec.subtype === "post") !== (input.contentKind === "post"))
     throw new AppError("invalid", "Content type does not match its setup.");
@@ -133,8 +154,8 @@ export function validatePollDetails(input: NewPollInput): void {
     parsePrice(String(input.budgetInr)) === null
   )
     throw new AppError("invalid", "Enter your budget in whole rupees.");
-  if (input.productUrl && !parseProductUrl(input.productUrl))
-    throw new AppError("invalid", "Enter a valid HTTPS product link.");
+  if (input.productUrl && !canonicalPollProductUrl(input.productUrl))
+    throw new AppError("invalid", "Enter a valid public product link.");
 }
 
 export function validatePoll(input: NewPollInput): void {
@@ -150,7 +171,7 @@ export function validatePoll(input: NewPollInput): void {
     throw new AppError("invalid", `Add up to ${MAX_POLL_MEDIA} media items.`);
   if (
     input.media?.some(
-      (item) => item.sourceUrl && !parseProductUrl(item.sourceUrl),
+      (item) => item.sourceUrl && !canonicalPollProductUrl(item.sourceUrl),
     )
   ) {
     throw new AppError(
